@@ -23,7 +23,7 @@ public class City {
         visualNode = new StackPane();
         
         // Base Circle
-        Circle circle = new Circle(10, Color.RED);
+        Circle circle = new Circle(40, Color.RED);
         
         // Yellow border if interactable
         if (isInteractable) {
