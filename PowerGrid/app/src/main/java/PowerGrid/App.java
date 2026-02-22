@@ -1,3 +1,5 @@
+//./gradlew run --no-configuration-cache
+
 package PowerGrid;
 
 import javafx.application.Application;
@@ -9,14 +11,15 @@ import javafx.scene.control.Button;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.ScrollEvent;
-import javafx.scene.layout.*;
-import javafx.scene.paint.Color;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.transform.Affine;
 import javafx.scene.transform.NonInvertibleTransformException;
 import javafx.stage.Stage;
-import java.io.File;
 
 public class App extends Application {
     private double mouseAnchorX, mouseAnchorY;
@@ -30,8 +33,8 @@ public class App extends Application {
         mapContainer.setStyle("-fx-background-color: #111;");
         HBox.setHgrow(mapContainer, Priority.ALWAYS);
 
-        File file = new File("/Users/carterfeng/Downloads/image.png");
-        Image img = new Image(file.toURI().toString());
+        String path = getClass().getResource("/map.png").toExternalForm();
+        Image img = new Image(path);
         imageView = new ImageView(img);
         
         // Boost performance for panning
@@ -54,7 +57,7 @@ public class App extends Application {
         mapContainer.widthProperty().addListener((o, old, val) -> clip.setWidth(val.doubleValue()));
         mapContainer.heightProperty().addListener((o, old, val) -> clip.setHeight(val.doubleValue()));
 
-        // --- UPDATED: GREY CIRCULAR HOME BUTTON ---
+        //home button
         Button homeBtn = new Button("⌂");
         homeBtn.setShape(new Circle(20));
         homeBtn.setMinSize(40, 40);
@@ -82,7 +85,9 @@ public class App extends Application {
         });
 
         mapContainer.setOnMouseDragged(event -> {
-            transform.appendTranslation(event.getX() - mouseAnchorX, event.getY() - mouseAnchorY);
+            double dx = event.getX() - mouseAnchorX;
+            double dy = event.getY() - mouseAnchorY;
+            transform.prependTranslation(dx, dy);
             mouseAnchorX = event.getX();
             mouseAnchorY = event.getY();
         });
