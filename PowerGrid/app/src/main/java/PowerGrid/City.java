@@ -23,7 +23,7 @@ public class City {
         visualNode = new Group();
 
         // Circle centered at (0,0) so layoutX/layoutY place the center at (x,y)
-        Circle circle = new Circle(40, Color.RED);
+        Circle circle = new Circle(15, Color.RED);
 
         if (isInteractable) {
             circle.setStroke(Color.YELLOW);
