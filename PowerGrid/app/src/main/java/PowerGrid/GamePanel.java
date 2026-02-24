@@ -136,5 +136,8 @@ public class GamePanel extends Application {
         transform.appendTranslation((containerW - imgW) / 2, (containerH - imgH) / 2);
     }
 
+    public String getGreeting() {
+        return "Welcome to Power Grid!";
+    }
     public static void main(String[] args) { launch(args); }
 }
