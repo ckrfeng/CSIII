@@ -1,21 +1,27 @@
 package PowerGrid;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 import javafx.scene.Group;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
-import javafx.scene.text.Text;
 
 public class City {
-    private String name;
-    private boolean isInteractable;
-    private double x, y;
-    private Group visualNode; // The UI element on the map
+    private String name; //Name of the city
+    private boolean isInteractable; //Determines whether or not a player can click a city to build in it during a turn
+    private double x, y; //Location of the City
+    private Group visualNode; // VisualNode is the UI Node on the pannable map
 
-    public City(String name, double x, double y, boolean isInteractable) {
+    // stores the players that are occupying the city, integers 1-5 where 1= player 1, 2=player 2, etc
+    private final List<Integer> occupyingPlayers = new ArrayList<>();
+
+    public City(String name, double x, double y) {
         this.name = name;
         this.x = x;
         this.y = y;
-        this.isInteractable = isInteractable;
+        isInteractable = true;
         createVisual();
     }
 
@@ -23,10 +29,10 @@ public class City {
         visualNode = new Group();
 
         // Circle centered at (0,0) so layoutX/layoutY place the center at (x,y)
-        Circle circle = new Circle(15, Color.RED);
+        Circle circle = new Circle(45, Color.TRANSPARENT);
 
         if (isInteractable) {
-            circle.setStroke(Color.YELLOW);
+            circle.setStroke(Color.CYAN);
             circle.setStrokeWidth(3);
             visualNode.setOnMouseClicked(e -> System.out.println("Clicked City: " + name));
             visualNode.setStyle("-fx-cursor: hand;");
@@ -35,14 +41,39 @@ public class City {
             visualNode.setMouseTransparent(true);
         }
 
-        Text label = new Text(name);
-        label.setFill(Color.WHITE);
-        label.setTranslateY(20); // Put text below circle center
-
-        visualNode.getChildren().addAll(circle, label);
+        visualNode.getChildren().add(circle);
         visualNode.setLayoutX(x);
         visualNode.setLayoutY(y);
     }
 
-    public Group getVisualNode() { return visualNode; }
+    public Group getVisualNode() {
+        return visualNode;
+    }
+
+    public void addOccupyingPlayer(int playerId) {
+        if (playerId < 1 || playerId > 5) {
+            throw new IllegalArgumentException("playerId must be between 1 and 5");
+        }
+        if (!occupyingPlayers.contains(playerId)) {
+            occupyingPlayers.add(playerId);
+        }
+    }
+
+    public List<Integer> getOccupyingPlayers() {
+        return Collections.unmodifiableList(occupyingPlayers);
+    }
+
+    public boolean hasAnyPlayer() {
+        return !occupyingPlayers.isEmpty();
+    }
+
+    public boolean isInteractable() {
+        return isInteractable;
+    }
+
+    public void setInteractable(boolean interactable) {
+        this.isInteractable = interactable;
+        visualNode.setMouseTransparent(!interactable);
+        visualNode.setStyle(interactable ? "-fx-cursor: hand;" : "");
+    }
 }

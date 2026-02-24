@@ -29,7 +29,7 @@ public class GamePanel extends Application {
 
     @Override
     public void start(Stage stage) {
-        // 1. Create the StackPane that will hold either the Menu or the Game
+        //Creates the stackPane that will hold either the Menu or the Game
         rootStack = new StackPane();
 
         // 2. Load the MenuPanel and tell it to run 'startGame' when a button is clicked
@@ -44,6 +44,7 @@ public class GamePanel extends Application {
 
     private void initGameView(Stage stage) {
         // 3. This is your original Map & Sidebar logic
+        
         mapContainer = new Pane();
         mapContainer.setStyle("-fx-background-color: #111;");
         HBox.setHgrow(mapContainer, Priority.ALWAYS);
@@ -84,7 +85,7 @@ public class GamePanel extends Application {
         mapContainer.getChildren().add(homeBtn);
 
         VBox sidebar = new VBox();
-        sidebar.setMinWidth(250);
+        sidebar.setMinWidth(500);
         sidebar.setStyle("-fx-background-color: #222; -fx-border-color: black; -fx-border-width: 0 0 0 2;");
 
         // Pan/Zoom Logic
@@ -117,8 +118,11 @@ public class GamePanel extends Application {
         rootStack.getChildren().clear();
         rootStack.getChildren().add(gameLayout);
         
-        // Ensure resetToCenter is called after the container has a width/height
-        resetToCenter();
+        // --- EDIT STARTS HERE ---
+        // Use Platform.runLater to ensure the Pane has a width/height before centering
+        javafx.application.Platform.runLater(() -> {
+            resetToCenter();
+        });
     }
 
     private void resetToCenter() {
