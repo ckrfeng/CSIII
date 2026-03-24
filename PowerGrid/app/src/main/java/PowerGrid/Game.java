@@ -2,9 +2,11 @@ package PowerGrid;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class Game {
     // Building cost for 1st house in a city (Step 1–3)
@@ -19,6 +21,7 @@ public class Game {
     private final Map<City, List<Edge>> adjacency = new HashMap<>();
     private final List<Player> players = new ArrayList<>();
     private final ResourceMarket resourceMarket = new ResourceMarket();
+    private final Set<RegionColor> selectedRegions = new HashSet<>();
 
     /** Current round (1-based). Advances at end of Phase 5 (Bureaucracy). */
     private int round = 1;
@@ -202,6 +205,8 @@ public class Game {
     }
 
     public void setRegionsInteractable(List<RegionColor> selectedRegions) {
+        this.selectedRegions.clear();
+        this.selectedRegions.addAll(selectedRegions);
         for (int i = 0; i < cities.size(); i++) {
             City city = cities.get(i);
             RegionColor rc = CityInitializer.regionForIndex(i);
@@ -250,6 +255,14 @@ public class Game {
     }
 
     private void updateCityInteractability(City city) {
+        int idx = cities.indexOf(city);
+        if (idx >= 0 && !selectedRegions.isEmpty()) {
+            RegionColor region = CityInitializer.regionForIndex(idx);
+            if (!selectedRegions.contains(region)) {
+                city.setInteractable(false);
+                return;
+            }
+        }
         // Rule:
         // - Step 1: a city that already has a player is NOT interactable
         // - Step 2 and 3: occupancy does not affect interactability

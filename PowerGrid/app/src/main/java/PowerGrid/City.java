@@ -17,7 +17,7 @@ public class City {
     private Group visualNode; // VisualNode is the UI Node on the pannable map
     private Circle ring;
 
-    // stores the players that are occupying the city, integers 1-5 where 1= player 1, 2=player 2, etc
+    // stores the players that are occupying the city, integers 1-6 where 1= player 1, 2=player 2, etc
     private final List<Integer> occupyingPlayers = new ArrayList<>();
 
     public City(String name, double x, double y) {
@@ -59,8 +59,8 @@ public class City {
     }
 
     public void addOccupyingPlayer(int playerId) {
-        if (playerId < 1 || playerId > 5) {
-            throw new IllegalArgumentException("playerId must be between 1 and 5");
+        if (playerId < 1 || playerId > 6) {
+            throw new IllegalArgumentException("playerId must be between 1 and 6");
         }
         if (!occupyingPlayers.contains(playerId)) {
             occupyingPlayers.add(playerId);

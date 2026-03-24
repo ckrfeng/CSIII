@@ -2,7 +2,6 @@ package PowerGrid;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
@@ -11,32 +10,40 @@ public class PowerPlantDeck {
     private final Deque<String> drawPile = new ArrayDeque<>();
     private final List<String> market = new ArrayList<>();
 
-    // Plants in use for this build (exclude 1,2,41,43,45,47,48,49 as requested)
-    private static final List<String> BASE_CARDS = Arrays.asList(
-            "3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20",
-            "21","22","23","24","25","26","27","28","29","30","31","32","33","34","35","36","37","38","39","40",
-            "42","44","46","50"
-    );
-
     public PowerPlantDeck() {
         initialize();
     }
 
-    public void initialize() {
+    private void initialize() {
         drawPile.clear();
         market.clear();
-
-        List<String> cards = new ArrayList<>(BASE_CARDS);
-        Collections.shuffle(cards);
-
-        // STEP3 card goes in deck. When drawn, game goes to Step 3 immediately.
-        cards.add("STEP3");
-        Collections.shuffle(cards);
-        drawPile.addAll(cards);
-
-        while (market.size() < 8 && !drawPile.isEmpty()) {
-            market.add(drawPile.removeFirst());
+        List<Integer> plugs = new ArrayList<>();
+        List<Integer> sockets = new ArrayList<>();
+        for (PowerPlantCard card : PowerPlantCard.values()) {
+            if (card.getNumber() <= 15) plugs.add(card.getNumber());
+            else sockets.add(card.getNumber());
         }
+        Collections.shuffle(plugs);
+        Collections.shuffle(sockets);
+
+        // Per rules: first 8 drawn cards shown in market are from plug (3-15) set only.
+        for (int i = 0; i < 8 && !plugs.isEmpty(); i++) {
+            market.add(String.valueOf(plugs.remove(0)));
+        }
+        market.sort((a, b) -> Integer.compare(Integer.parseInt(a), Integer.parseInt(b)));
+
+        // One additional plug card is placed on top of supply stack.
+        if (!plugs.isEmpty()) {
+            drawPile.addLast(String.valueOf(plugs.remove(0)));
+        }
+
+        // Remaining supply stack is shuffled sockets + remaining plugs + STEP3 at bottom.
+        List<String> rest = new ArrayList<>();
+        for (Integer n : plugs) rest.add(String.valueOf(n));
+        for (Integer n : sockets) rest.add(String.valueOf(n));
+        Collections.shuffle(rest);
+        drawPile.addAll(rest);
+        drawPile.addLast("STEP3");
     }
 
     public List<String> getMarket() {
@@ -53,6 +60,11 @@ public class PowerPlantDeck {
         if (drawPile.isEmpty()) return null;
         String next = drawPile.removeFirst();
         market.add(next);
+        market.sort((a, b) -> {
+            if ("STEP3".equals(a)) return 1;
+            if ("STEP3".equals(b)) return -1;
+            return Integer.compare(Integer.parseInt(a), Integer.parseInt(b));
+        });
         return next;
     }
 }

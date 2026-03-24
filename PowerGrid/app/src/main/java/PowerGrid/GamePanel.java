@@ -3,6 +3,7 @@ package PowerGrid;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -22,6 +23,7 @@ import javafx.scene.input.ScrollEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -43,19 +45,32 @@ public class GamePanel extends Application {
     private final Random random = new Random();
     private List<Player> turnOrder = new ArrayList<>();
     private int currentTurnIdx = 0;
+    private int viewingPlayerIdx = 0;
     private String phase = "Power Plant Auction";
 
     private Label phaseLabel = new Label();
     private Label roundLabel = new Label();
     private Label playerLabel = new Label();
     private Label bidStatus = new Label("No auction active.");
+    private HBox ownedPlantsRow;
+    private HBox citiesCountRow;
+    private Label viewingLabel;
+    private VBox playerMaterialsBox;
 
     private PowerPlantDeck deck;
     private String activeAuctionCardId;
-    private int highestBid;
-    private Player highestBidder;
+    private TextField auctionBidField;
+    private HBox auctionRow1;
+    private HBox auctionRow2;
+    private boolean auctionInProgress = false;
+    private int auctionStarterIdx = -1;
+    private int highestBid = 0;
+    private int highestBidderIdx = -1;
+    private List<Boolean> boughtThisAuctionRound = new ArrayList<>();
+    private List<Boolean> optedOutThisAuctionRound = new ArrayList<>();
+    private List<Boolean> passedThisAuction = new ArrayList<>();
 
-    private final Map<String, Image> cardImages = new java.util.HashMap<>();
+    private final Map<String, Image> cardImages = new HashMap<>();
 
     @Override
     public void start(Stage stage) {
@@ -137,6 +152,7 @@ public class GamePanel extends Application {
         game = new Game(1654, 2287, orderedNames.size());
         game.applyRandomizedPlayerOrder(orderedNames, colorHexes);
         turnOrder = new ArrayList<>(game.getPlayers());
+        initAuctionRoundState();
 
         StackPane panel = new StackPane();
         panel.setStyle("-fx-background-color: black;");
@@ -355,6 +371,8 @@ public class GamePanel extends Application {
             box.setStyle("-fx-background-color:" + p.getColorHex() + "; -fx-padding: 6 9 6 9; -fx-text-fill: white;");
             turnHeader.getChildren().add(box);
         }
+        citiesCountRow = new HBox(8);
+        refreshCitiesCountRow();
 
         phaseLabel.setTextFill(Color.WHITE);
         roundLabel.setTextFill(Color.WHITE);
@@ -377,9 +395,33 @@ public class GamePanel extends Application {
 
         Label bottomTitle = new Label("Owned Power Plants");
         bottomTitle.setTextFill(Color.WHITE);
-        HBox owned = buildOwnedPlantsRow();
+        viewingLabel = new Label();
+        viewingLabel.setTextFill(Color.WHITE);
+        ownedPlantsRow = buildOwnedPlantsRow();
+        refreshOwnedAndMaterials();
+        playerMaterialsBox = new VBox(6);
+        refreshPlayerMaterials();
 
-        root.getChildren().addAll(turnHeader, phaseBox, actionBtns, auctionPanel, resourcesPanel, bottomTitle, owned);
+        Button prev = new Button("View previous player");
+        Button next = new Button("View next player");
+        Button ret = new Button("Return to board");
+        prev.setOnAction(e -> {
+            viewingPlayerIdx = (viewingPlayerIdx - 1 + turnOrder.size()) % turnOrder.size();
+            refreshOwnedAndMaterials();
+        });
+        next.setOnAction(e -> {
+            viewingPlayerIdx = (viewingPlayerIdx + 1) % turnOrder.size();
+            refreshOwnedAndMaterials();
+        });
+        ret.setOnAction(e -> {
+            viewingPlayerIdx = currentTurnIdx;
+            refreshOwnedAndMaterials();
+        });
+        HBox viewButtons = new HBox(8, prev, next, ret);
+
+        Region spacer = new Region();
+        VBox.setVgrow(spacer, Priority.ALWAYS);
+        root.getChildren().addAll(turnHeader, citiesCountRow, phaseBox, actionBtns, auctionPanel, resourcesPanel, viewingLabel, bottomTitle, ownedPlantsRow, playerMaterialsBox, spacer, viewButtons);
         return root;
     }
 
@@ -396,63 +438,106 @@ public class GamePanel extends Application {
         phaseLabel.setText("Phase: " + phase);
         roundLabel.setText("Round: " + game.getRound());
         playerLabel.setText("Current: " + turnOrder.get(currentTurnIdx).getDisplayName());
+        if (viewingLabel != null) {
+            viewingLabel.setText("Viewing board: " + turnOrder.get(viewingPlayerIdx).getDisplayName());
+        }
     }
 
     private VBox buildAuctionPanel() {
         deck = new PowerPlantDeck();
         VBox box = new VBox(8);
-        HBox cardsRow = new HBox(6);
+        auctionRow1 = new HBox(6);
+        auctionRow2 = new HBox(6);
 
-        refreshCardButtons(cardsRow);
+        refreshCardButtons();
 
-        TextField bidField = new TextField();
-        bidField.setPromptText("Bid amount");
+        auctionBidField = new TextField();
+        auctionBidField.setPromptText("Bid amount");
         Button confirm = new Button("Confirm");
         Button skip = new Button("Skip");
-        HBox actions = new HBox(6, bidField, confirm, skip);
+        HBox actions = new HBox(6, auctionBidField, confirm, skip);
 
         confirm.setOnAction(e -> {
             if (activeAuctionCardId == null) return;
             try {
-                int bid = Integer.parseInt(bidField.getText().trim());
+                int bid = Integer.parseInt(auctionBidField.getText().trim());
                 Player current = turnOrder.get(currentTurnIdx);
                 int minBid = Integer.parseInt(activeAuctionCardId);
-                if (bid > highestBid && bid >= minBid && bid <= current.getElektro()) {
+                if (!auctionInProgress) {
+                    if (bid < minBid || bid > current.getElektro()) return;
+                    auctionInProgress = true;
+                    auctionStarterIdx = currentTurnIdx;
                     highestBid = bid;
-                    highestBidder = current;
-                    bidStatus.setText(current.getDisplayName() + " bids " + bid);
-                    currentTurnIdx = (currentTurnIdx + 1) % turnOrder.size();
-                    refreshPhaseIndicators();
+                    highestBidderIdx = currentTurnIdx;
+                    bidStatus.setText(current.getDisplayName() + " starts auction for " + activeAuctionCardId + " at " + bid);
+                    int next = nextBidderFrom(currentTurnIdx);
+                    if (next < 0) {
+                        finalizeCurrentAuction();
+                    } else {
+                        currentTurnIdx = next;
+                        viewingPlayerIdx = currentTurnIdx;
+                        refreshPhaseIndicators();
+                    }
+                } else {
+                    if (bid <= highestBid || bid > current.getElektro()) return;
+                    highestBid = bid;
+                    highestBidderIdx = currentTurnIdx;
+                    bidStatus.setText(current.getDisplayName() + " bids " + bid + " for " + activeAuctionCardId);
+                    int next = nextBidderFrom(currentTurnIdx);
+                    if (next < 0) {
+                        finalizeCurrentAuction();
+                    } else {
+                        currentTurnIdx = next;
+                        viewingPlayerIdx = currentTurnIdx;
+                        refreshPhaseIndicators();
+                    }
                 }
             } catch (Exception ignored) {}
         });
 
         skip.setOnAction(e -> {
-            if (activeAuctionCardId == null) return;
-            if (highestBidder != null) {
-                highestBidder.pay(highestBid);
-                if (highestBidder.getPowerPlants().size() < Player.MAX_POWER_PLANTS) {
-                    int n = Integer.parseInt(activeAuctionCardId);
-                    highestBidder.addPowerPlant(PowerPlant.fossil(n, ResourceType.COAL, 1, 1));
+            if (auctionInProgress) {
+                passedThisAuction.set(currentTurnIdx, true);
+                bidStatus.setText(turnOrder.get(currentTurnIdx).getDisplayName() + " passes on " + activeAuctionCardId);
+                int next = nextBidderFrom(currentTurnIdx);
+                if (next < 0) {
+                    finalizeCurrentAuction();
+                } else {
+                    currentTurnIdx = next;
+                    viewingPlayerIdx = currentTurnIdx;
+                    refreshPhaseIndicators();
                 }
-                String drawn = deck.takeFromMarket(activeAuctionCardId);
-                if ("STEP3".equals(drawn)) game.enterStep3Immediately();
-                bidStatus.setText("Winner: " + highestBidder.getDisplayName() + " at " + highestBid);
-                refreshCardButtons(cardsRow);
+                return;
+            }
+
+            // Skip while selecting a power plant means opt out for this auction phase round.
+            optedOutThisAuctionRound.set(currentTurnIdx, true);
+            bidStatus.setText(turnOrder.get(currentTurnIdx).getDisplayName() + " opts out of this auction round.");
+            int nextChooser = nextChooserFrom(currentTurnIdx);
+            if (nextChooser < 0) {
+                initAuctionRoundState();
+                bidStatus.setText("Auction round finished. Resetting for next round.");
+            } else {
+                currentTurnIdx = nextChooser;
+                viewingPlayerIdx = currentTurnIdx;
             }
             activeAuctionCardId = null;
-            highestBid = 0;
-            highestBidder = null;
+            auctionBidField.clear();
+            refreshPhaseIndicators();
+            refreshOwnedAndMaterials();
         });
 
         bidStatus.setTextFill(Color.WHITE);
-        box.getChildren().addAll(cardsRow, actions, bidStatus);
+        box.getChildren().addAll(auctionRow1, auctionRow2, actions, bidStatus);
         return box;
     }
 
-    private void refreshCardButtons(HBox row) {
-        row.getChildren().clear();
-        for (String id : deck.getMarket()) {
+    private void refreshCardButtons() {
+        auctionRow1.getChildren().clear();
+        auctionRow2.getChildren().clear();
+        List<String> market = deck.getMarket();
+        for (int i = 0; i < market.size(); i++) {
+            String id = market.get(i);
             Button b = new Button();
             b.setPrefSize(84, 84);
             b.setMinSize(84, 84);
@@ -466,12 +551,25 @@ public class GamePanel extends Application {
                 b.setGraphic(iv);
             }
             b.setOnAction(e -> {
+                if (auctionInProgress) {
+                    bidStatus.setText("Finish current auction before choosing another plant.");
+                    return;
+                }
+                // In Step 1/2 only current market (4 cheapest) can be auctioned.
+                if (game.getStep() < 3 && deck.getMarket().indexOf(id) >= 4) {
+                    bidStatus.setText("Only current market plants (top row) can be auctioned.");
+                    return;
+                }
+                if (boughtThisAuctionRound.get(currentTurnIdx) || optedOutThisAuctionRound.get(currentTurnIdx)) {
+                    bidStatus.setText("Current player cannot start a new auction this round.");
+                    return;
+                }
                 activeAuctionCardId = id;
-                highestBid = 0;
-                highestBidder = null;
+                auctionBidField.setText(id);
                 bidStatus.setText("Auction started for " + id);
             });
-            row.getChildren().add(b);
+            if (i < 4) auctionRow1.getChildren().add(b);
+            else auctionRow2.getChildren().add(b);
         }
     }
 
@@ -499,12 +597,15 @@ public class GamePanel extends Application {
             Button b = new Button(slot.getPrice() + " (" + slot.getCount() + ")");
             b.setOnAction(e -> {
                 Player p = turnOrder.get(currentTurnIdx);
+                if (!canStoreResource(p, type)) return;
                 int idx = game.getResourceMarket().getSlots(type).indexOf(slot);
                 int cost = game.getResourceMarket().buy(type, idx);
                 if (cost > 0 && p.pay(cost)) {
+                    storeResource(p, type);
                     phase = "Purchase Resources";
                     refreshPhaseIndicators();
                     b.setText(slot.getPrice() + " (" + slot.getCount() + ")");
+                    refreshPlayerMaterials();
                 }
             });
             row.getChildren().add(b);
@@ -514,14 +615,191 @@ public class GamePanel extends Application {
 
     private HBox buildOwnedPlantsRow() {
         HBox row = new HBox(8);
-        Player current = turnOrder.get(currentTurnIdx);
         for (int i = 0; i < 3; i++) {
-            Label slot = new Label(i < current.getPowerPlants().size() ? "Plant " + current.getPowerPlants().get(i).getNumber() : "Empty");
+            Label slot = new Label("Empty");
             slot.setStyle("-fx-background-color:#333; -fx-text-fill:white; -fx-padding:8;");
             slot.setPrefWidth(140);
             row.getChildren().add(slot);
         }
         return row;
+    }
+
+    private void refreshOwnedAndMaterials() {
+        if (ownedPlantsRow == null || turnOrder.isEmpty()) return;
+        Player shown = turnOrder.get(viewingPlayerIdx);
+        for (int i = 0; i < 3; i++) {
+            Label slot = (Label) ownedPlantsRow.getChildren().get(i);
+            slot.setText(i < shown.getPowerPlants().size() ? "Plant " + shown.getPowerPlants().get(i).getNumber() : "Empty");
+        }
+        refreshPlayerMaterials();
+        refreshPhaseIndicators();
+    }
+
+    private void refreshPlayerMaterials() {
+        if (playerMaterialsBox == null || turnOrder.isEmpty()) return;
+        playerMaterialsBox.getChildren().clear();
+        Player shown = turnOrder.get(viewingPlayerIdx);
+        for (PowerPlant plant : shown.getPowerPlants()) {
+            VBox block = new VBox(3);
+            Label title = new Label("Plant " + plant.getNumber() + " materials");
+            title.setTextFill(Color.WHITE);
+            HBox symbols = new HBox(4);
+            for (Map.Entry<ResourceType, Integer> e : plant.getStoredResources().entrySet()) {
+                for (int i = 0; i < e.getValue(); i++) {
+                    symbols.getChildren().add(materialNode(e.getKey()));
+                }
+            }
+            block.getChildren().addAll(title, symbols);
+            playerMaterialsBox.getChildren().add(block);
+        }
+    }
+
+    private javafx.scene.Node materialNode(ResourceType type) {
+        if (type == ResourceType.COAL) {
+            Rectangle r = new Rectangle(10, 10, Color.BLACK);
+            r.setStroke(Color.WHITE);
+            r.setStrokeWidth(1);
+            return r;
+        }
+        Circle c = new Circle(5);
+        c.setStroke(Color.WHITE);
+        c.setStrokeWidth(1);
+        if (type == ResourceType.OIL) c.setFill(Color.BLACK);
+        else if (type == ResourceType.GARBAGE) c.setFill(Color.YELLOW);
+        else c.setFill(Color.RED);
+        return c;
+    }
+
+    private void refreshCitiesCountRow() {
+        if (citiesCountRow == null) return;
+        citiesCountRow.getChildren().clear();
+        Label title = new Label("Number of Cities");
+        title.setTextFill(Color.WHITE);
+        citiesCountRow.getChildren().add(title);
+        for (Player p : turnOrder) {
+            Label box = new Label(String.valueOf(game.getConnectedCityCount(p)));
+            box.setStyle("-fx-background-color:" + p.getColorHex() + "; -fx-padding: 4 10 4 10; -fx-text-fill: white;");
+            citiesCountRow.getChildren().add(box);
+        }
+    }
+
+    private void addPurchasedPlant(Player player, String cardId) {
+        int num = Integer.parseInt(cardId);
+        PowerPlantCard card = PowerPlantCard.byNumber(num);
+        if (card == null) return;
+        if (player.getPowerPlants().size() >= Player.MAX_POWER_PLANTS) {
+            // Keep current behavior simple by scrapping the oldest plant.
+            player.removePowerPlant(player.getPowerPlants().get(0));
+        }
+        player.addPowerPlant(card.toPowerPlant());
+    }
+
+    private void initAuctionRoundState() {
+        boughtThisAuctionRound = new ArrayList<>();
+        optedOutThisAuctionRound = new ArrayList<>();
+        passedThisAuction = new ArrayList<>();
+        for (int i = 0; i < turnOrder.size(); i++) {
+            boughtThisAuctionRound.add(false);
+            optedOutThisAuctionRound.add(false);
+            passedThisAuction.add(false);
+        }
+        auctionInProgress = false;
+        auctionStarterIdx = -1;
+        highestBid = 0;
+        highestBidderIdx = -1;
+        activeAuctionCardId = null;
+    }
+
+    private int nextChooserFrom(int fromIdx) {
+        if (turnOrder.isEmpty()) return -1;
+        int n = turnOrder.size();
+        for (int step = 1; step <= n; step++) {
+            int idx = (fromIdx + step) % n;
+            if (!boughtThisAuctionRound.get(idx) && !optedOutThisAuctionRound.get(idx)) {
+                return idx;
+            }
+        }
+        return -1;
+    }
+
+    private int nextBidderFrom(int fromIdx) {
+        if (turnOrder.isEmpty()) return -1;
+        int activeCount = 0;
+        int lastActive = -1;
+        for (int i = 0; i < turnOrder.size(); i++) {
+            if (!boughtThisAuctionRound.get(i) && !optedOutThisAuctionRound.get(i) && !passedThisAuction.get(i)) {
+                activeCount++;
+                lastActive = i;
+            }
+        }
+        if (activeCount <= 1) return -1;
+        int n = turnOrder.size();
+        for (int step = 1; step <= n; step++) {
+            int idx = (fromIdx + step) % n;
+            if (!boughtThisAuctionRound.get(idx) && !optedOutThisAuctionRound.get(idx) && !passedThisAuction.get(idx)) {
+                return idx;
+            }
+        }
+        return lastActive;
+    }
+
+    private void finalizeCurrentAuction() {
+        if (highestBidderIdx < 0 || activeAuctionCardId == null) return;
+        Player winner = turnOrder.get(highestBidderIdx);
+        if (!winner.pay(highestBid)) {
+            bidStatus.setText("Auction failed: winner cannot pay.");
+            auctionInProgress = false;
+            activeAuctionCardId = null;
+            return;
+        }
+        addPurchasedPlant(winner, activeAuctionCardId);
+        boughtThisAuctionRound.set(highestBidderIdx, true);
+        String wonCard = activeAuctionCardId;
+        String drawn = deck.takeFromMarket(activeAuctionCardId);
+        if ("STEP3".equals(drawn)) game.enterStep3Immediately();
+        bidStatus.setText(winner.getDisplayName() + " wins " + wonCard + " for " + highestBid);
+
+        int nextChooser;
+        if (auctionStarterIdx >= 0 && !boughtThisAuctionRound.get(auctionStarterIdx) && !optedOutThisAuctionRound.get(auctionStarterIdx)) {
+            nextChooser = auctionStarterIdx;
+        } else {
+            nextChooser = nextChooserFrom(auctionStarterIdx >= 0 ? auctionStarterIdx : highestBidderIdx);
+        }
+        if (nextChooser < 0) {
+            initAuctionRoundState();
+            bidStatus.setText(bidStatus.getText() + " | Auction round finished.");
+        } else {
+            currentTurnIdx = nextChooser;
+            viewingPlayerIdx = currentTurnIdx;
+            auctionInProgress = false;
+            activeAuctionCardId = null;
+            highestBid = 0;
+            highestBidderIdx = -1;
+            for (int i = 0; i < passedThisAuction.size(); i++) {
+                passedThisAuction.set(i, false);
+            }
+        }
+        auctionBidField.clear();
+        refreshCardButtons();
+        refreshOwnedAndMaterials();
+        refreshCitiesCountRow();
+        refreshPhaseIndicators();
+    }
+
+    private boolean canStoreResource(Player player, ResourceType type) {
+        for (PowerPlant plant : player.getPowerPlants()) {
+            if (plant.canStore(type) && plant.getTotalStored() < plant.getStorageCapacity()) return true;
+        }
+        return false;
+    }
+
+    private void storeResource(Player player, ResourceType type) {
+        for (PowerPlant plant : player.getPowerPlants()) {
+            if (plant.canStore(type) && plant.getTotalStored() < plant.getStorageCapacity()) {
+                plant.addStored(type, 1);
+                return;
+            }
+        }
     }
 
     private void showCityPopup(City city) {
@@ -544,6 +822,7 @@ public class GamePanel extends Application {
         confirm.setOnAction(e -> {
             if (game.placeHouse(current, city)) {
                 updateCityStroke(city);
+                refreshCitiesCountRow();
             }
             rootStack.getChildren().remove(overlay);
         });
@@ -570,6 +849,9 @@ public class GamePanel extends Application {
             if (p != null) colors.add(Color.web(p.getColorHex()));
         }
         city.updateOccupancyStroke(colors);
+        if (!city.isInteractable() && colors.isEmpty()) {
+            city.getVisualNode().getChildren().filtered(n -> n instanceof Circle).forEach(n -> ((Circle) n).setStroke(Color.TRANSPARENT));
+        }
     }
 
     private void resetToCenter() {
