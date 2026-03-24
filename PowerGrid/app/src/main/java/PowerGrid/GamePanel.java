@@ -57,6 +57,14 @@ public class GamePanel extends Application {
     private Label viewingLabel;
     private VBox playerMaterialsBox;
 
+    private Button auctionPhaseBtn;
+    private Button resourcePhaseBtn;
+    private VBox auctionPanelRef;
+    private VBox resourcesPanelRef;
+    private Button resourcesDoneBtn;
+
+    private int resourceTurnIdx = 0;
+
     private PowerPlantDeck deck;
     private String activeAuctionCardId;
     private TextField auctionBidField;
@@ -381,17 +389,20 @@ public class GamePanel extends Application {
 
         HBox phaseBox = new HBox(12, phaseLabel, roundLabel, playerLabel);
 
-        Button auctionBtn = new Button("Power Plant Auction");
-        Button resourceBtn = new Button("Purchase Resources");
-        HBox actionBtns = new HBox(8, auctionBtn, resourceBtn);
+        auctionPhaseBtn = new Button("Power Plant Auction");
+        resourcePhaseBtn = new Button("Purchase Resources");
+        resourcePhaseBtn.setDisable(true);
+        HBox actionBtns = new HBox(8, auctionPhaseBtn, resourcePhaseBtn);
 
-        VBox auctionPanel = buildAuctionPanel();
-        VBox resourcesPanel = buildResourcesPanel();
-        auctionPanel.setVisible(false); auctionPanel.setManaged(false);
-        resourcesPanel.setVisible(false); resourcesPanel.setManaged(false);
+        auctionPanelRef = buildAuctionPanel();
+        resourcesPanelRef = buildResourcesPanel();
+        auctionPanelRef.setVisible(false);
+        auctionPanelRef.setManaged(false);
+        resourcesPanelRef.setVisible(false);
+        resourcesPanelRef.setManaged(false);
 
-        auctionBtn.setOnAction(e -> togglePanel(auctionPanel, resourcesPanel, "Power Plant Auction"));
-        resourceBtn.setOnAction(e -> togglePanel(resourcesPanel, auctionPanel, "Purchase Resources"));
+        auctionPhaseBtn.setOnAction(e -> togglePanel(auctionPanelRef, resourcesPanelRef, "Power Plant Auction"));
+        resourcePhaseBtn.setOnAction(e -> togglePanel(resourcesPanelRef, auctionPanelRef, "Purchase Resources"));
 
         Label bottomTitle = new Label("Owned Power Plants");
         bottomTitle.setTextFill(Color.WHITE);
@@ -421,7 +432,8 @@ public class GamePanel extends Application {
 
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
-        root.getChildren().addAll(turnHeader, citiesCountRow, phaseBox, actionBtns, auctionPanel, resourcesPanel, viewingLabel, bottomTitle, ownedPlantsRow, playerMaterialsBox, spacer, viewButtons);
+        root.getChildren().addAll(turnHeader, citiesCountRow, phaseBox, actionBtns, auctionPanelRef, resourcesPanelRef, viewingLabel, bottomTitle, ownedPlantsRow, playerMaterialsBox, spacer, viewButtons);
+        skipBoughtPlayersInAuction();
         return root;
     }
 
@@ -476,6 +488,7 @@ public class GamePanel extends Application {
                     } else {
                         currentTurnIdx = next;
                         viewingPlayerIdx = currentTurnIdx;
+                        applySuggestedBidForCurrentTurn();
                         refreshPhaseIndicators();
                     }
                 } else {
@@ -489,6 +502,7 @@ public class GamePanel extends Application {
                     } else {
                         currentTurnIdx = next;
                         viewingPlayerIdx = currentTurnIdx;
+                        applySuggestedBidForCurrentTurn();
                         refreshPhaseIndicators();
                     }
                 }
@@ -505,6 +519,7 @@ public class GamePanel extends Application {
                 } else {
                     currentTurnIdx = next;
                     viewingPlayerIdx = currentTurnIdx;
+                    applySuggestedBidForCurrentTurn();
                     refreshPhaseIndicators();
                 }
                 return;
@@ -515,11 +530,11 @@ public class GamePanel extends Application {
             bidStatus.setText(turnOrder.get(currentTurnIdx).getDisplayName() + " opts out of this auction round.");
             int nextChooser = nextChooserFrom(currentTurnIdx);
             if (nextChooser < 0) {
-                initAuctionRoundState();
-                bidStatus.setText("Auction round finished. Resetting for next round.");
+                enterResourcePurchasePhase();
             } else {
                 currentTurnIdx = nextChooser;
                 viewingPlayerIdx = currentTurnIdx;
+                skipBoughtPlayersInAuction();
             }
             activeAuctionCardId = null;
             auctionBidField.clear();
@@ -565,7 +580,8 @@ public class GamePanel extends Application {
                     return;
                 }
                 activeAuctionCardId = id;
-                auctionBidField.setText(id);
+                int retail = Integer.parseInt(id);
+                auctionBidField.setText(String.valueOf(retail));
                 bidStatus.setText("Auction started for " + id);
             });
             if (i < 4) auctionRow1.getChildren().add(b);
@@ -587,24 +603,40 @@ public class GamePanel extends Application {
         box.getChildren().add(materialRow(ResourceType.GARBAGE));
         box.getChildren().add(new Label("Uranium"));
         box.getChildren().add(materialRow(ResourceType.URANIUM));
+        resourcesDoneBtn = new Button("Confirm (finish buying resources)");
+        resourcesDoneBtn.setOnAction(e -> finishCurrentResourceTurn());
+        box.getChildren().add(resourcesDoneBtn);
         for (var n : box.getChildren()) if (n instanceof Label l) l.setTextFill(Color.WHITE);
         return box;
     }
 
     private HBox materialRow(ResourceType type) {
         HBox row = new HBox(4);
-        for (ResourceMarket.Slot slot : game.getResourceMarket().getSlots(type)) {
+        List<ResourceMarket.Slot> slots = game.getResourceMarket().getSlots(type);
+        int minPriceWithStock = -1;
+        for (ResourceMarket.Slot s : slots) {
+            if (s.getCount() > 0) {
+                minPriceWithStock = s.getPrice();
+                break;
+            }
+        }
+        for (int i = 0; i < slots.size(); i++) {
+            ResourceMarket.Slot slot = slots.get(i);
             Button b = new Button(slot.getPrice() + " (" + slot.getCount() + ")");
+            b.getProperties().put("resourceType", type);
+            b.getProperties().put("slotIndex", i);
+            boolean cheapestAvailable = minPriceWithStock >= 0 && slot.getPrice() == minPriceWithStock && slot.getCount() > 0;
+            b.setDisable(!cheapestAvailable);
+            final int slotIndex = i;
             b.setOnAction(e -> {
-                Player p = turnOrder.get(currentTurnIdx);
+                Player p = turnOrder.get(resourceTurnIdx);
                 if (!canStoreResource(p, type)) return;
-                int idx = game.getResourceMarket().getSlots(type).indexOf(slot);
-                int cost = game.getResourceMarket().buy(type, idx);
+                int cost = game.getResourceMarket().buy(type, slotIndex);
                 if (cost > 0 && p.pay(cost)) {
                     storeResource(p, type);
                     phase = "Purchase Resources";
                     refreshPhaseIndicators();
-                    b.setText(slot.getPrice() + " (" + slot.getCount() + ")");
+                    refreshAllResourceRows();
                     refreshPlayerMaterials();
                 }
             });
@@ -613,12 +645,47 @@ public class GamePanel extends Application {
         return row;
     }
 
+    private void refreshAllResourceRows() {
+        if (resourcesPanelRef == null) return;
+        for (var node : resourcesPanelRef.getChildren()) {
+            if (node instanceof HBox row) {
+                refreshMaterialRowButtons(row);
+            }
+        }
+    }
+
+    private void refreshMaterialRowButtons(HBox row) {
+        for (var child : row.getChildren()) {
+            if (!(child instanceof Button b)) continue;
+            ResourceType type = (ResourceType) b.getProperties().get("resourceType");
+            Integer idxObj = (Integer) b.getProperties().get("slotIndex");
+            if (type == null || idxObj == null) continue;
+            int idx = idxObj;
+            List<ResourceMarket.Slot> slots = game.getResourceMarket().getSlots(type);
+            if (idx < 0 || idx >= slots.size()) continue;
+            ResourceMarket.Slot slot = slots.get(idx);
+            b.setText(slot.getPrice() + " (" + slot.getCount() + ")");
+            int minPriceWithStock = -1;
+            for (ResourceMarket.Slot s : slots) {
+                if (s.getCount() > 0) {
+                    minPriceWithStock = s.getPrice();
+                    break;
+                }
+            }
+            boolean cheapestAvailable = minPriceWithStock >= 0 && slot.getPrice() == minPriceWithStock && slot.getCount() > 0;
+            b.setDisable(!cheapestAvailable);
+        }
+    }
+
     private HBox buildOwnedPlantsRow() {
         HBox row = new HBox(8);
         for (int i = 0; i < 3; i++) {
-            Label slot = new Label("Empty");
-            slot.setStyle("-fx-background-color:#333; -fx-text-fill:white; -fx-padding:8;");
-            slot.setPrefWidth(140);
+            StackPane slot = new StackPane();
+            slot.setPrefSize(140, 110);
+            slot.setStyle("-fx-background-color:#333; -fx-padding:4;");
+            Label empty = new Label("Empty");
+            empty.setTextFill(Color.WHITE);
+            slot.getChildren().add(empty);
             row.getChildren().add(slot);
         }
         return row;
@@ -628,8 +695,20 @@ public class GamePanel extends Application {
         if (ownedPlantsRow == null || turnOrder.isEmpty()) return;
         Player shown = turnOrder.get(viewingPlayerIdx);
         for (int i = 0; i < 3; i++) {
-            Label slot = (Label) ownedPlantsRow.getChildren().get(i);
-            slot.setText(i < shown.getPowerPlants().size() ? "Plant " + shown.getPowerPlants().get(i).getNumber() : "Empty");
+            StackPane slot = (StackPane) ownedPlantsRow.getChildren().get(i);
+            slot.getChildren().clear();
+            if (i < shown.getPowerPlants().size()) {
+                PowerPlant plant = shown.getPowerPlants().get(i);
+                String id = String.valueOf(plant.getNumber());
+                ImageView iv = new ImageView(loadCardImage(id));
+                iv.setFitWidth(132);
+                iv.setFitHeight(102);
+                slot.getChildren().add(iv);
+            } else {
+                Label empty = new Label("Empty");
+                empty.setTextFill(Color.WHITE);
+                slot.getChildren().add(empty);
+            }
         }
         refreshPlayerMaterials();
         refreshPhaseIndicators();
@@ -727,7 +806,7 @@ public class GamePanel extends Application {
         int activeCount = 0;
         int lastActive = -1;
         for (int i = 0; i < turnOrder.size(); i++) {
-            if (!boughtThisAuctionRound.get(i) && !optedOutThisAuctionRound.get(i) && !passedThisAuction.get(i)) {
+            if (!passedThisAuction.get(i) && canParticipateInAuction(i)) {
                 activeCount++;
                 lastActive = i;
             }
@@ -736,11 +815,84 @@ public class GamePanel extends Application {
         int n = turnOrder.size();
         for (int step = 1; step <= n; step++) {
             int idx = (fromIdx + step) % n;
-            if (!boughtThisAuctionRound.get(idx) && !optedOutThisAuctionRound.get(idx) && !passedThisAuction.get(idx)) {
+            if (!passedThisAuction.get(idx) && canParticipateInAuction(idx)) {
                 return idx;
             }
         }
         return lastActive;
+    }
+
+    /** Eligible to bid on an auction for a specific plant: has not bought this round and has not opted out of Phase 2. */
+    private boolean canParticipateInAuction(int playerIndex) {
+        if (playerIndex < 0 || playerIndex >= turnOrder.size()) return false;
+        return !boughtThisAuctionRound.get(playerIndex) && !optedOutThisAuctionRound.get(playerIndex);
+    }
+
+    private void applySuggestedBidForCurrentTurn() {
+        if (auctionBidField == null || activeAuctionCardId == null) return;
+        int suggested = highestBid + 1;
+        if (suggested < Integer.parseInt(activeAuctionCardId)) {
+            suggested = Integer.parseInt(activeAuctionCardId);
+        }
+        auctionBidField.setText(String.valueOf(suggested));
+    }
+
+    private void enterResourcePurchasePhase() {
+        initAuctionRoundState();
+        auctionInProgress = false;
+        activeAuctionCardId = null;
+        phase = "Purchase Resources";
+
+        if (auctionPhaseBtn != null) {
+            auctionPhaseBtn.setDisable(true);
+        }
+        if (resourcePhaseBtn != null) {
+            resourcePhaseBtn.setDisable(false);
+        }
+        if (auctionPanelRef != null) {
+            auctionPanelRef.setVisible(false);
+            auctionPanelRef.setManaged(false);
+        }
+        if (resourcesPanelRef != null) {
+            resourcesPanelRef.setVisible(true);
+            resourcesPanelRef.setManaged(true);
+        }
+        resourceTurnIdx = turnOrder.isEmpty() ? 0 : turnOrder.size() - 1;
+        if (resourcesDoneBtn != null) {
+            resourcesDoneBtn.setDisable(false);
+        }
+        refreshAllResourceRows();
+        currentTurnIdx = resourceTurnIdx;
+        viewingPlayerIdx = resourceTurnIdx;
+        refreshPhaseIndicators();
+        bidStatus.setText("Auction phase complete. Purchase resources (reverse turn order).");
+    }
+
+    private void finishCurrentResourceTurn() {
+        if (turnOrder.isEmpty()) return;
+        resourceTurnIdx--;
+        if (resourceTurnIdx < 0) {
+            phase = "Build / Other";
+            if (resourcesPanelRef != null) {
+                resourcesPanelRef.setVisible(false);
+                resourcesPanelRef.setManaged(false);
+            }
+            if (auctionPhaseBtn != null) {
+                auctionPhaseBtn.setDisable(false);
+            }
+            if (resourcePhaseBtn != null) {
+                resourcePhaseBtn.setDisable(true);
+            }
+            bidStatus.setText("Resource purchase phase complete.");
+            return;
+        }
+        currentTurnIdx = resourceTurnIdx;
+        viewingPlayerIdx = resourceTurnIdx;
+        if (resourcesDoneBtn != null) {
+            resourcesDoneBtn.setDisable(false);
+        }
+        refreshAllResourceRows();
+        refreshPhaseIndicators();
     }
 
     private void finalizeCurrentAuction() {
@@ -766,8 +918,8 @@ public class GamePanel extends Application {
             nextChooser = nextChooserFrom(auctionStarterIdx >= 0 ? auctionStarterIdx : highestBidderIdx);
         }
         if (nextChooser < 0) {
-            initAuctionRoundState();
-            bidStatus.setText(bidStatus.getText() + " | Auction round finished.");
+            bidStatus.setText(bidStatus.getText() + " | Auction phase complete.");
+            enterResourcePurchasePhase();
         } else {
             currentTurnIdx = nextChooser;
             viewingPlayerIdx = currentTurnIdx;
@@ -778,11 +930,25 @@ public class GamePanel extends Application {
             for (int i = 0; i < passedThisAuction.size(); i++) {
                 passedThisAuction.set(i, false);
             }
+            skipBoughtPlayersInAuction();
         }
         auctionBidField.clear();
         refreshCardButtons();
         refreshOwnedAndMaterials();
         refreshCitiesCountRow();
+        refreshPhaseIndicators();
+    }
+
+    /** If current player already owns a plant this round, they cannot be in the auction UI. */
+    private void skipBoughtPlayersInAuction() {
+        if (turnOrder.isEmpty()) return;
+        if ("Purchase Resources".equals(phase) || "Build / Other".equals(phase)) return;
+        int guard = 0;
+        while (guard < turnOrder.size() && boughtThisAuctionRound.get(currentTurnIdx)) {
+            currentTurnIdx = (currentTurnIdx + 1) % turnOrder.size();
+            guard++;
+        }
+        viewingPlayerIdx = currentTurnIdx;
         refreshPhaseIndicators();
     }
 
