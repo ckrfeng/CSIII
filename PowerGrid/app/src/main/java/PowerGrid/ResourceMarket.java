@@ -75,10 +75,14 @@ public class ResourceMarket {
 
     /** Place initial tokens on market (cheapest slots first). Call once at game start. */
     public void fillInitialMarket() {
-        // Coal: 3 on cheapest spaces
-        putInitial(ResourceType.COAL, 3);
-        putInitial(ResourceType.OIL, 3);
-        putInitial(ResourceType.GARBAGE, 2);
+        // Requested starting setup:
+        // Coal: 24 tokens on prices 1..8 (3 each)
+        // Oil: 18 tokens on prices 3..8 (3 each)
+        // Garbage: 6 tokens on prices 7..8 (3 each)
+        // Uranium: 2 tokens on 14 and 16 (1 each)
+        putInitial(ResourceType.COAL, 24);
+        putInitial(ResourceType.OIL, 18);
+        putInitial(ResourceType.GARBAGE, 6);
         putInitial(ResourceType.URANIUM, 2);
         // Recompute supply
         supply.put(ResourceType.COAL, TOTAL_COAL - countOnMarket(ResourceType.COAL));

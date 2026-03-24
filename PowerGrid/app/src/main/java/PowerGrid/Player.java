@@ -17,6 +17,8 @@ public class Player {
     private final int playerId;
     private int elektro;
     private final List<PowerPlant> powerPlants = new ArrayList<>();
+    private String displayName;
+    private String colorHex = "#FFFFFF";
 
     public Player(int playerId) {
         if (playerId < 1 || playerId > 6) {
@@ -24,6 +26,7 @@ public class Player {
         }
         this.playerId = playerId;
         this.elektro = STARTING_ELEKTRO;
+        this.displayName = "Player " + playerId;
     }
 
     public int getPlayerId() {
@@ -32,6 +35,26 @@ public class Player {
 
     public int getElektro() {
         return elektro;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public void setDisplayName(String displayName) {
+        if (displayName != null && !displayName.isBlank()) {
+            this.displayName = displayName.trim();
+        }
+    }
+
+    public String getColorHex() {
+        return colorHex;
+    }
+
+    public void setColorHex(String colorHex) {
+        if (colorHex != null && !colorHex.isBlank()) {
+            this.colorHex = colorHex;
+        }
     }
 
     /** Pay Elektro (e.g. for plants, resources, building). Returns false if insufficient. */

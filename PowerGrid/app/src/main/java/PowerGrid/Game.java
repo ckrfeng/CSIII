@@ -32,24 +32,7 @@ public class Game {
 
     /** Creates map and optionally a set of players (2–6). */
     public Game(double imgW, double imgH, int numberOfPlayers) {
-        // Create 5 cities based on image dimensions
-        cities.add(new City("Center City", imgW / 2, imgH / 2));
-        cities.add(new City("NW Outpost", 100, 100));
-        cities.add(new City("NE Port", imgW - 100, 100));
-        cities.add(new City("SW Mine", 100, imgH - 100));
-        cities.add(new City("SE Capital", imgW - 100, imgH - 100));
-
-        // Example connections (undirected, weighted)
-        City center = cities.get(0);
-        City nw = cities.get(1);
-        City ne = cities.get(2);
-        City sw = cities.get(3);
-        City se = cities.get(4);
-
-        connect(center, nw, 5);
-        connect(center, ne, 5);
-        connect(center, sw, 6);
-        connect(center, se, 6);
+        cities.addAll(CityInitializer.createGermanyCities());
 
         if (numberOfPlayers >= 2 && numberOfPlayers <= 6) {
             for (int i = 1; i <= numberOfPlayers; i++) {
@@ -107,6 +90,10 @@ public class Game {
         updateAllCityInteractability();
     }
 
+    public void enterStep3Immediately() {
+        setStep(3);
+    }
+
     // --- Player occupancy methods (Game-level API) ---
 
     /**
@@ -118,6 +105,7 @@ public class Game {
         }
         city.addOccupyingPlayer(playerId);
         updateCityInteractability(city);
+        updateStepForScaling();
     }
 
     /**
@@ -170,6 +158,60 @@ public class Game {
         for (int i = 1; i <= n; i++) {
             players.add(new Player(i));
         }
+        updateAllCityInteractability();
+    }
+
+    public int getMaxPlayersPerCityForCurrentStep() {
+        if (step == 1) return 1;
+        if (step == 2) return 2;
+        return 3;
+    }
+
+    public int getCurrentEntryCost(City city) {
+        int occupied = city.getOccupyingPlayers().size();
+        int maxAllowed = getMaxPlayersPerCityForCurrentStep();
+        if (occupied >= maxAllowed) return -1;
+        if (occupied == 0) return BUILD_COST_FIRST;
+        if (occupied == 1) return BUILD_COST_SECOND;
+        return BUILD_COST_THIRD;
+    }
+
+    public boolean canPlayerEnterCity(Player player, City city) {
+        if (player == null || city == null || !city.isInteractable()) return false;
+        if (city.getOccupyingPlayers().contains(player.getPlayerId())) return false;
+        int cost = getCurrentEntryCost(city);
+        return cost > 0 && player.getElektro() >= cost;
+    }
+
+    public boolean placeHouse(Player player, City city) {
+        if (!canPlayerEnterCity(player, city)) return false;
+        int cost = getCurrentEntryCost(city);
+        if (!player.pay(cost)) return false;
+        addPlayerToCity(city, player.getPlayerId());
+        return true;
+    }
+
+    public void applyRandomizedPlayerOrder(List<String> names, List<String> colorHexes) {
+        int n = Math.min(players.size(), names.size());
+        for (int i = 0; i < n; i++) {
+            players.get(i).setDisplayName(names.get(i));
+            if (i < colorHexes.size()) {
+                players.get(i).setColorHex(colorHexes.get(i));
+            }
+        }
+    }
+
+    public void setRegionsInteractable(List<RegionColor> selectedRegions) {
+        for (int i = 0; i < cities.size(); i++) {
+            City city = cities.get(i);
+            RegionColor rc = CityInitializer.regionForIndex(i);
+            boolean enabled = selectedRegions.contains(rc);
+            if (!enabled) {
+                city.setInteractable(false);
+            } else {
+                updateCityInteractability(city);
+            }
+        }
     }
 
     // --- Resource market & round ---
@@ -218,6 +260,19 @@ public class Game {
             interactable = true;
         }
         city.setInteractable(interactable);
+    }
+
+    // For 3-5 players we automate step 2 at 7 connected cities.
+    private void updateStepForScaling() {
+        if (players.size() >= 3 && players.size() <= 5 && step == 1) {
+            int maxConnected = 0;
+            for (Player p : players) {
+                maxConnected = Math.max(maxConnected, getConnectedCityCount(p));
+            }
+            if (maxConnected >= 7) {
+                setStep(2);
+            }
+        }
     }
 }
 

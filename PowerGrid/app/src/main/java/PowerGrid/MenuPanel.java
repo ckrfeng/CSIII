@@ -17,14 +17,14 @@ import javafx.scene.text.Font;
 
 public class MenuPanel extends StackPane {
     private Font customFont;
-    private final Runnable onStartGame;
+    private final java.util.function.IntConsumer onStartGame;
     private final VBox buttonColumn;
     
     // Original image dimensions
     private final double ORIG_W = 651.0;
     private final double ORIG_H = 353.0;
 
-    public MenuPanel(Runnable onStartGame) {
+    public MenuPanel(java.util.function.IntConsumer onStartGame) {
         this.onStartGame = onStartGame;
 
         // 1. BACKGROUND IMAGE (Stretches to fill window)
@@ -53,9 +53,9 @@ public class MenuPanel extends StackPane {
         Button btn5 = createStyledButton("5 PLAYERS");
         Button btnTutorial = createStyledButton("TUTORIAL");
 
-        btn3.setOnAction(e -> onStartGame.run());
-        btn4.setOnAction(e -> onStartGame.run());
-        btn5.setOnAction(e -> onStartGame.run());
+        btn3.setOnAction(e -> this.onStartGame.accept(3));
+        btn4.setOnAction(e -> this.onStartGame.accept(4));
+        btn5.setOnAction(e -> this.onStartGame.accept(5));
         btnTutorial.setOnAction(e -> openRulesPDF());
 
         buttonColumn.getChildren().addAll(btn3, btn4, btn5, btnTutorial);
