@@ -158,6 +158,8 @@ public class GamePanel extends Application {
         current.setTextFill(Color.WHITE);
 
         VBox orderBox = new VBox(6);
+        orderBox.setPickOnBounds(false);
+        orderBox.setMouseTransparent(true);
         orderBox.setAlignment(Pos.TOP_RIGHT);
         StackPane.setAlignment(orderBox, javafx.geometry.Pos.TOP_RIGHT);
         orderBox.setTranslateX(-12);
@@ -239,7 +241,8 @@ public class GamePanel extends Application {
         }
 
         Pane mapPane = new Pane();
-        mapPane.setPickOnBounds(true);
+        mapPane.setPickOnBounds(false);   // was true
+        map.setMouseTransparent(true);
         map.setLayoutX(0);
         map.setLayoutY(0);
         overlay.setLayoutX(0);
