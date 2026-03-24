@@ -44,7 +44,77 @@ public class Game {
         }
 
         resourceMarket.fillInitialMarket();
+        GermanyEdgeInitializer.initialize(this);
         updateAllCityInteractability();
+    }
+
+    /** Adjacency map for pathfinding (same graph as {@link #getEdges()}). */
+    public Map<City, List<Edge>> getAdjacency() {
+        return adjacency;
+    }
+
+    /** Cities where this player has a house. */
+    public List<City> getCitiesForPlayer(Player player) {
+        if (player == null) return Collections.emptyList();
+        int id = player.getPlayerId();
+        List<City> out = new ArrayList<>();
+        for (City c : cities) {
+            if (c.getOccupyingPlayers().contains(id)) {
+                out.add(c);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Cheapest connection cost from any city in the player's network to {@code target}.
+     * {@code 0} if the player has no cities yet (first build). {@code -1} if unreachable.
+     */
+    public int getConnectionCostToEnter(Player player, City target) {
+        if (player == null || target == null) return -1;
+        if (getConnectedCityCount(player) == 0) {
+            return 0;
+        }
+        PathResult best = PathResult.unreachable();
+        for (City start : getCitiesForPlayer(player)) {
+            PathResult r = DijkstraPathfinder.shortestPath(start, target, adjacency);
+            if (r.isReachable() && r.getTotalCost() < best.getTotalCost()) {
+                best = r;
+            }
+        }
+        return best.isReachable() ? best.getTotalCost() : -1;
+    }
+
+    /** Shortest path from the player's network to {@code target} (for drawing). */
+    public PathResult getBestPathForBuild(Player player, City target) {
+        if (player == null || target == null) return PathResult.unreachable();
+        if (getConnectedCityCount(player) == 0) {
+            return new PathResult(0, List.of(target));
+        }
+        PathResult best = PathResult.unreachable();
+        for (City start : getCitiesForPlayer(player)) {
+            PathResult r = DijkstraPathfinder.shortestPath(start, target, adjacency);
+            if (r.isReachable() && r.getTotalCost() < best.getTotalCost()) {
+                best = r;
+            }
+        }
+        return best;
+    }
+
+    /** Edge weights along consecutive cities in {@code path} (same order as path segments). */
+    public List<Integer> getEdgeWeightsAlongPath(List<City> path) {
+        return DijkstraPathfinder.edgeWeightsAlongPath(path, adjacency);
+    }
+
+    /** Total Elektro to build in {@code city}: connection sum + house cost. {@code -1} if impossible. */
+    public int getTotalElektroToEnter(Player player, City city) {
+        if (player == null || city == null || !city.isInteractable()) return -1;
+        if (city.getOccupyingPlayers().contains(player.getPlayerId())) return -1;
+        int house = getCurrentEntryCost(city);
+        if (house < 0) return -1;
+        int conn = getConnectionCostToEnter(player, city);
+        if (conn < 0) return -1;
+        return conn + house;
     }
 
     public List<City> getCities() {
@@ -107,6 +177,15 @@ public class Game {
             throw new IllegalArgumentException("city must not be null");
         }
         city.addOccupyingPlayer(playerId);
+        updateCityInteractability(city);
+        updateStepForScaling();
+    }
+
+    /** Undo a build: remove house and refund Elektro. */
+    public void undoHouse(Player player, City city, int refundAmount) {
+        if (player == null || city == null) return;
+        if (!city.removeOccupyingPlayer(player.getPlayerId())) return;
+        player.receive(refundAmount);
         updateCityInteractability(city);
         updateStepForScaling();
     }
@@ -182,14 +261,15 @@ public class Game {
     public boolean canPlayerEnterCity(Player player, City city) {
         if (player == null || city == null || !city.isInteractable()) return false;
         if (city.getOccupyingPlayers().contains(player.getPlayerId())) return false;
-        int cost = getCurrentEntryCost(city);
-        return cost > 0 && player.getElektro() >= cost;
+        int total = getTotalElektroToEnter(player, city);
+        return total >= 0 && player.getElektro() >= total;
     }
 
     public boolean placeHouse(Player player, City city) {
+        int total = getTotalElektroToEnter(player, city);
+        if (total < 0) return false;
         if (!canPlayerEnterCity(player, city)) return false;
-        int cost = getCurrentEntryCost(city);
-        if (!player.pay(cost)) return false;
+        if (!player.pay(total)) return false;
         addPlayerToCity(city, player.getPlayerId());
         return true;
     }

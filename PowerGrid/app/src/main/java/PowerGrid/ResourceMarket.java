@@ -43,14 +43,14 @@ public class ResourceMarket {
     private final Map<ResourceType, Integer> supply = new EnumMap<>(ResourceType.class);
 
     public ResourceMarket() {
-        // Coal: spaces 1–8 (prices 1,1,1,2,2,3,3,4), max 3 per slot
-        slots.put(ResourceType.COAL, buildSlots(new int[] { 1, 1, 1, 2, 2, 3, 3, 4 }, 3));
-        // Oil: spaces 3–8 (prices 3,3,4,5,5,6)
-        slots.put(ResourceType.OIL, buildSlots(new int[] { 3, 3, 4, 5, 5, 6 }, 3));
-        // Garbage: spaces 6–8 (prices 6,7,8)
-        slots.put(ResourceType.GARBAGE, buildSlots(new int[] { 6, 7, 8 }, 3));
-        // Uranium: spaces 14–16 (prices 14,14,16), max 1 per slot
-        slots.put(ResourceType.URANIUM, buildSlots(new int[] { 14, 14, 16 }, 1));
+        // Coal: 8 columns priced 1–8 Elektro, max 3 tokens per column (UI row of 8 buttons).
+        slots.put(ResourceType.COAL, buildSlots(new int[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 3));
+        // Oil: same 8 columns; game starts with stock on prices 3–8 only.
+        slots.put(ResourceType.OIL, buildSlots(new int[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 3));
+        // Garbage (trash): 8 columns; stock starts on 6–8 only.
+        slots.put(ResourceType.GARBAGE, buildSlots(new int[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 3));
+        // Uranium: 12 distinct price columns, max 1 token per column.
+        slots.put(ResourceType.URANIUM, buildSlots(new int[] { 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16 }, 1));
 
         // Initial supply = total - what we put on market at start
         supply.put(ResourceType.COAL, TOTAL_COAL - countOnMarket(ResourceType.COAL));
@@ -73,33 +73,31 @@ public class ResourceMarket {
         return n;
     }
 
-    /** Place initial tokens on market (cheapest slots first). Call once at game start. */
+    /** Place initial tokens on market. Call once at game start. */
     public void fillInitialMarket() {
-        // Requested starting setup:
-        // Coal: 24 tokens on prices 1..8 (3 each)
-        // Oil: 18 tokens on prices 3..8 (3 each)
-        // Garbage: 6 tokens on prices 7..8 (3 each)
-        // Uranium: 2 tokens on 14 and 16 (1 each)
-        putInitial(ResourceType.COAL, 24);
-        putInitial(ResourceType.OIL, 18);
-        putInitial(ResourceType.GARBAGE, 6);
-        putInitial(ResourceType.URANIUM, 2);
-        // Recompute supply
+        // Coal: 1(3) … 8(3) — full cheap-to-expensive row.
+        for (Slot s : slots.get(ResourceType.COAL)) {
+            s.setCount(3);
+        }
+        // Oil: 1(0) 2(0) 3(3) … 8(3)
+        List<Slot> oil = slots.get(ResourceType.OIL);
+        for (int i = 0; i < oil.size(); i++) {
+            oil.get(i).setCount(i >= 2 ? 3 : 0);
+        }
+        // Garbage: 1(0)…5(0) 6(3) 7(3) 8(3)
+        List<Slot> gar = slots.get(ResourceType.GARBAGE);
+        for (int i = 0; i < gar.size(); i++) {
+            gar.get(i).setCount(i >= 5 ? 3 : 0);
+        }
+        // Uranium: 1(0)…12(0) 14(1) 16(1) — indices 10,11 in 12-slot row
+        List<Slot> u = slots.get(ResourceType.URANIUM);
+        for (int i = 0; i < u.size(); i++) {
+            u.get(i).setCount((i == 10 || i == 11) ? 1 : 0);
+        }
         supply.put(ResourceType.COAL, TOTAL_COAL - countOnMarket(ResourceType.COAL));
         supply.put(ResourceType.OIL, TOTAL_OIL - countOnMarket(ResourceType.OIL));
         supply.put(ResourceType.GARBAGE, TOTAL_GARBAGE - countOnMarket(ResourceType.GARBAGE));
         supply.put(ResourceType.URANIUM, TOTAL_URANIUM - countOnMarket(ResourceType.URANIUM));
-    }
-
-    private void putInitial(ResourceType type, int amount) {
-        List<Slot> list = slots.get(type);
-        int left = amount;
-        for (Slot s : list) {
-            while (left > 0 && s.canAdd()) {
-                s.addOne();
-                left--;
-            }
-        }
     }
 
     /** Read-only view of slots for a resource type (price and count per slot). */

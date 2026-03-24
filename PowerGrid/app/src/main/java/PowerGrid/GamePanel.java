@@ -1,12 +1,15 @@
 package PowerGrid;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.stream.Collectors;
 
 import javafx.application.Application;
 import javafx.geometry.Point2D;
@@ -17,6 +20,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
+import javafx.scene.text.Font;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.ScrollEvent;
@@ -28,6 +32,7 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.shape.Line;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.transform.Affine;
 import javafx.scene.transform.NonInvertibleTransformException;
@@ -41,6 +46,12 @@ public class GamePanel extends Application {
     private StackPane rootStack;
     private Game game;
     private Group mapGroup;
+    private Group connectionPathGroup;
+    private Group cityPopupGroup;
+
+    private HBox turnOrderHeaderBox;
+    private StackPane elektroBadge;
+    private Label elektroAmountLabel;
 
     private final Random random = new Random();
     private List<Player> turnOrder = new ArrayList<>();
@@ -55,15 +66,35 @@ public class GamePanel extends Application {
     private HBox ownedPlantsRow;
     private HBox citiesCountRow;
     private Label viewingLabel;
-    private VBox playerMaterialsBox;
+    private HBox playerMaterialsBox;
 
     private Button auctionPhaseBtn;
     private Button resourcePhaseBtn;
     private VBox auctionPanelRef;
     private VBox resourcesPanelRef;
     private Button resourcesDoneBtn;
+    private Button buildCitiesBtn;
+    private Button powerCitiesBtn;
+    private HBox buildActionsRow;
 
     private int resourceTurnIdx = 0;
+    private int buildTurnIdx = -1;
+    private boolean buildPhaseActive = false;
+    private final Deque<BuildUndoStep> buildUndoStack = new ArrayDeque<>();
+
+    private int powerTurnIdx = -1;
+
+    private static final class BuildUndoStep {
+        final City city;
+        final int totalPaid;
+        final List<Line> pathLines;
+
+        BuildUndoStep(City city, int totalPaid, List<Line> pathLines) {
+            this.city = city;
+            this.totalPaid = totalPaid;
+            this.pathLines = pathLines;
+        }
+    }
 
     private PowerPlantDeck deck;
     private String activeAuctionCardId;
@@ -298,7 +329,9 @@ public class GamePanel extends Application {
         imageView.setCache(true);
         imageView.setCacheHint(CacheHint.SPEED);
 
-        mapGroup = new Group(imageView);
+        connectionPathGroup = new Group();
+        cityPopupGroup = new Group();
+        mapGroup = new Group(imageView, connectionPathGroup);
         mapGroup.getTransforms().add(transform);
         mapContainer.getChildren().add(mapGroup);
 
@@ -311,11 +344,14 @@ public class GamePanel extends Application {
         for (City city : game.getCities()) {
             mapGroup.getChildren().add(city.getVisualNode());
             city.getVisualNode().setOnMouseClicked(e -> {
-                if (city.isInteractable() && !turnOrder.isEmpty()) showCityPopup(city);
+                if (!turnOrder.isEmpty()) {
+                    handleCityClick(city);
+                }
                 e.consume();
             });
             updateCityStroke(city);
         }
+        mapGroup.getChildren().add(cityPopupGroup);
 
         Rectangle clip = new Rectangle();
         mapContainer.setClip(clip);
@@ -366,19 +402,15 @@ public class GamePanel extends Application {
 
     private VBox buildDashboard() {
         VBox root = new VBox(10);
-        root.setMinWidth(520);
-        root.setPrefWidth(560);
+        root.setMinWidth(670);
+        root.setPrefWidth(710);
         root.setStyle("-fx-background-color: #222; -fx-padding: 12; -fx-border-color: black; -fx-border-width: 0 0 0 2;");
 
-        HBox turnHeader = new HBox(8);
+        turnOrderHeaderBox = new HBox(8);
         Label topTitle = new Label("Turn Order");
         topTitle.setTextFill(Color.WHITE);
-        turnHeader.getChildren().add(topTitle);
-        for (Player p : turnOrder) {
-            Label box = new Label(p.getDisplayName());
-            box.setStyle("-fx-background-color:" + p.getColorHex() + "; -fx-padding: 6 9 6 9; -fx-text-fill: white;");
-            turnHeader.getChildren().add(box);
-        }
+        turnOrderHeaderBox.getChildren().add(topTitle);
+        refreshTurnHeader();
         citiesCountRow = new HBox(8);
         refreshCitiesCountRow();
 
@@ -392,7 +424,11 @@ public class GamePanel extends Application {
         auctionPhaseBtn = new Button("Power Plant Auction");
         resourcePhaseBtn = new Button("Purchase Resources");
         resourcePhaseBtn.setDisable(true);
-        HBox actionBtns = new HBox(8, auctionPhaseBtn, resourcePhaseBtn);
+        buildCitiesBtn = new Button("Build Cities");
+        powerCitiesBtn = new Button("Power Cities");
+        buildCitiesBtn.setDisable(true);
+        powerCitiesBtn.setDisable(true);
+        HBox actionBtns = new HBox(8, auctionPhaseBtn, resourcePhaseBtn, buildCitiesBtn, powerCitiesBtn);
 
         auctionPanelRef = buildAuctionPanel();
         resourcesPanelRef = buildResourcesPanel();
@@ -403,14 +439,37 @@ public class GamePanel extends Application {
 
         auctionPhaseBtn.setOnAction(e -> togglePanel(auctionPanelRef, resourcesPanelRef, "Power Plant Auction"));
         resourcePhaseBtn.setOnAction(e -> togglePanel(resourcesPanelRef, auctionPanelRef, "Purchase Resources"));
+        buildCitiesBtn.setOnAction(e -> {
+            if (!buildPhaseActive) return;
+            phase = "Build Cities";
+            refreshPhaseIndicators();
+        });
+        powerCitiesBtn.setOnAction(e -> startPowerCitiesPhase());
 
         Label bottomTitle = new Label("Owned Power Plants");
         bottomTitle.setTextFill(Color.WHITE);
         viewingLabel = new Label();
         viewingLabel.setTextFill(Color.WHITE);
         ownedPlantsRow = buildOwnedPlantsRow();
+        elektroBadge = new StackPane();
+        elektroBadge.setMinSize(56, 56);
+        elektroBadge.setMaxSize(56, 56);
+        Circle eCirc = new Circle(26, Color.rgb(40, 160, 60));
+        elektroAmountLabel = new Label("50");
+        elektroAmountLabel.setTextFill(Color.WHITE);
+        elektroAmountLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
+        elektroBadge.getChildren().addAll(eCirc, elektroAmountLabel);
+        HBox plantsAndElektro = new HBox(12, ownedPlantsRow, elektroBadge);
+        buildActionsRow = new HBox(8);
+        Button undoBuildBtn = new Button("Undo purchase");
+        Button finishBuildBtn = new Button("Finish turn");
+        undoBuildBtn.setOnAction(e -> undoLastBuild());
+        finishBuildBtn.setOnAction(e -> finishBuildTurn());
+        buildActionsRow.getChildren().addAll(undoBuildBtn, finishBuildBtn);
+        buildActionsRow.setVisible(false);
+        buildActionsRow.setManaged(false);
         refreshOwnedAndMaterials();
-        playerMaterialsBox = new VBox(6);
+        playerMaterialsBox = new HBox(10);
         refreshPlayerMaterials();
 
         Button prev = new Button("View previous player");
@@ -432,7 +491,7 @@ public class GamePanel extends Application {
 
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
-        root.getChildren().addAll(turnHeader, citiesCountRow, phaseBox, actionBtns, auctionPanelRef, resourcesPanelRef, viewingLabel, bottomTitle, ownedPlantsRow, playerMaterialsBox, spacer, viewButtons);
+        root.getChildren().addAll(turnOrderHeaderBox, citiesCountRow, phaseBox, actionBtns, auctionPanelRef, resourcesPanelRef, buildActionsRow, viewingLabel, bottomTitle, plantsAndElektro, playerMaterialsBox, spacer, viewButtons);
         skipBoughtPlayersInAuction();
         return root;
     }
@@ -449,9 +508,34 @@ public class GamePanel extends Application {
     private void refreshPhaseIndicators() {
         phaseLabel.setText("Phase: " + phase);
         roundLabel.setText("Round: " + game.getRound());
-        playerLabel.setText("Current: " + turnOrder.get(currentTurnIdx).getDisplayName());
+        if (!turnOrder.isEmpty() && currentTurnIdx >= 0 && currentTurnIdx < turnOrder.size()) {
+            playerLabel.setText("Current: " + turnOrder.get(currentTurnIdx).getDisplayName());
+        }
         if (viewingLabel != null) {
             viewingLabel.setText("Viewing board: " + turnOrder.get(viewingPlayerIdx).getDisplayName());
+        }
+    }
+
+    private void refreshTurnHeader() {
+        if (turnOrderHeaderBox == null) return;
+        while (turnOrderHeaderBox.getChildren().size() > 1) {
+            turnOrderHeaderBox.getChildren().remove(1);
+        }
+        for (Player p : turnOrder) {
+            Label box = new Label(p.getDisplayName());
+            box.setStyle("-fx-background-color:" + p.getColorHex() + "; -fx-padding: 6 9 6 9; -fx-text-fill: white;");
+            turnOrderHeaderBox.getChildren().add(box);
+        }
+    }
+
+    private void handleCityClick(City city) {
+        if ("Build Cities".equals(phase) && buildPhaseActive) {
+            if (currentTurnIdx < 0 || currentTurnIdx >= turnOrder.size()) return;
+            showCityBuildPopup(city);
+            return;
+        }
+        if ("Power Plant Auction".equals(phase) || "Purchase Resources".equals(phase)) {
+            return;
         }
     }
 
@@ -613,20 +697,14 @@ public class GamePanel extends Application {
     private HBox materialRow(ResourceType type) {
         HBox row = new HBox(4);
         List<ResourceMarket.Slot> slots = game.getResourceMarket().getSlots(type);
-        int minPriceWithStock = -1;
-        for (ResourceMarket.Slot s : slots) {
-            if (s.getCount() > 0) {
-                minPriceWithStock = s.getPrice();
-                break;
-            }
-        }
+        int firstNonEmpty = firstNonEmptySlotIndex(slots);
         for (int i = 0; i < slots.size(); i++) {
             ResourceMarket.Slot slot = slots.get(i);
             Button b = new Button(slot.getPrice() + " (" + slot.getCount() + ")");
             b.getProperties().put("resourceType", type);
             b.getProperties().put("slotIndex", i);
-            boolean cheapestAvailable = minPriceWithStock >= 0 && slot.getPrice() == minPriceWithStock && slot.getCount() > 0;
-            b.setDisable(!cheapestAvailable);
+            boolean activeSlot = firstNonEmpty >= 0 && i == firstNonEmpty && slot.getCount() > 0;
+            b.setDisable(!activeSlot);
             final int slotIndex = i;
             b.setOnAction(e -> {
                 Player p = turnOrder.get(resourceTurnIdx);
@@ -643,6 +721,14 @@ public class GamePanel extends Application {
             row.getChildren().add(b);
         }
         return row;
+    }
+
+    /** First column (left to right) that still has stock — only that slot is purchasable. */
+    private int firstNonEmptySlotIndex(List<ResourceMarket.Slot> slots) {
+        for (int i = 0; i < slots.size(); i++) {
+            if (slots.get(i).getCount() > 0) return i;
+        }
+        return -1;
     }
 
     private void refreshAllResourceRows() {
@@ -665,15 +751,9 @@ public class GamePanel extends Application {
             if (idx < 0 || idx >= slots.size()) continue;
             ResourceMarket.Slot slot = slots.get(idx);
             b.setText(slot.getPrice() + " (" + slot.getCount() + ")");
-            int minPriceWithStock = -1;
-            for (ResourceMarket.Slot s : slots) {
-                if (s.getCount() > 0) {
-                    minPriceWithStock = s.getPrice();
-                    break;
-                }
-            }
-            boolean cheapestAvailable = minPriceWithStock >= 0 && slot.getPrice() == minPriceWithStock && slot.getCount() > 0;
-            b.setDisable(!cheapestAvailable);
+            int first = firstNonEmptySlotIndex(slots);
+            boolean activeSlot = first >= 0 && idx == first && slot.getCount() > 0;
+            b.setDisable(!activeSlot);
         }
     }
 
@@ -681,7 +761,7 @@ public class GamePanel extends Application {
         HBox row = new HBox(8);
         for (int i = 0; i < 3; i++) {
             StackPane slot = new StackPane();
-            slot.setPrefSize(140, 110);
+            slot.setPrefSize(132, 132);
             slot.setStyle("-fx-background-color:#333; -fx-padding:4;");
             Label empty = new Label("Empty");
             empty.setTextFill(Color.WHITE);
@@ -694,6 +774,9 @@ public class GamePanel extends Application {
     private void refreshOwnedAndMaterials() {
         if (ownedPlantsRow == null || turnOrder.isEmpty()) return;
         Player shown = turnOrder.get(viewingPlayerIdx);
+        if (elektroAmountLabel != null) {
+            elektroAmountLabel.setText(String.valueOf(shown.getElektro()));
+        }
         for (int i = 0; i < 3; i++) {
             StackPane slot = (StackPane) ownedPlantsRow.getChildren().get(i);
             slot.getChildren().clear();
@@ -701,8 +784,11 @@ public class GamePanel extends Application {
                 PowerPlant plant = shown.getPowerPlants().get(i);
                 String id = String.valueOf(plant.getNumber());
                 ImageView iv = new ImageView(loadCardImage(id));
-                iv.setFitWidth(132);
-                iv.setFitHeight(102);
+                iv.setPreserveRatio(true);
+                iv.setSmooth(true);
+                iv.setFitWidth(120);
+                iv.setFitHeight(120);
+                StackPane.setAlignment(iv, Pos.CENTER);
                 slot.getChildren().add(iv);
             } else {
                 Label empty = new Label("Empty");
@@ -719,7 +805,7 @@ public class GamePanel extends Application {
         playerMaterialsBox.getChildren().clear();
         Player shown = turnOrder.get(viewingPlayerIdx);
         for (PowerPlant plant : shown.getPowerPlants()) {
-            VBox block = new VBox(3);
+            VBox block = new VBox(4);
             Label title = new Label("Plant " + plant.getNumber() + " materials");
             title.setTextFill(Color.WHITE);
             HBox symbols = new HBox(4);
@@ -841,6 +927,10 @@ public class GamePanel extends Application {
         initAuctionRoundState();
         auctionInProgress = false;
         activeAuctionCardId = null;
+        if (game.getRound() == 1) {
+            TurnOrder.sortRoundOneByLargestPlant(turnOrder);
+            refreshTurnHeader();
+        }
         phase = "Purchase Resources";
 
         if (auctionPhaseBtn != null) {
@@ -864,26 +954,47 @@ public class GamePanel extends Application {
         refreshAllResourceRows();
         currentTurnIdx = resourceTurnIdx;
         viewingPlayerIdx = resourceTurnIdx;
+        refreshOwnedAndMaterials();
         refreshPhaseIndicators();
         bidStatus.setText("Auction phase complete. Purchase resources (reverse turn order).");
+    }
+
+    private void enterBuildPhase() {
+        phase = "Build Cities";
+        buildPhaseActive = true;
+        buildUndoStack.clear();
+        clearConnectionPath();
+        cityPopupGroup.getChildren().clear();
+        buildTurnIdx = turnOrder.isEmpty() ? 0 : turnOrder.size() - 1;
+        currentTurnIdx = buildTurnIdx;
+        viewingPlayerIdx = buildTurnIdx;
+        if (resourcesPanelRef != null) {
+            resourcesPanelRef.setVisible(false);
+            resourcesPanelRef.setManaged(false);
+        }
+        if (resourcePhaseBtn != null) {
+            resourcePhaseBtn.setDisable(true);
+        }
+        if (auctionPhaseBtn != null) {
+            auctionPhaseBtn.setDisable(true);
+        }
+        if (buildCitiesBtn != null) {
+            buildCitiesBtn.setDisable(false);
+        }
+        if (buildActionsRow != null) {
+            buildActionsRow.setVisible(true);
+            buildActionsRow.setManaged(true);
+        }
+        refreshOwnedAndMaterials();
+        refreshPhaseIndicators();
+        bidStatus.setText("Build cities (reverse turn order). Undo / Finish turn when done.");
     }
 
     private void finishCurrentResourceTurn() {
         if (turnOrder.isEmpty()) return;
         resourceTurnIdx--;
         if (resourceTurnIdx < 0) {
-            phase = "Build / Other";
-            if (resourcesPanelRef != null) {
-                resourcesPanelRef.setVisible(false);
-                resourcesPanelRef.setManaged(false);
-            }
-            if (auctionPhaseBtn != null) {
-                auctionPhaseBtn.setDisable(false);
-            }
-            if (resourcePhaseBtn != null) {
-                resourcePhaseBtn.setDisable(true);
-            }
-            bidStatus.setText("Resource purchase phase complete.");
+            enterBuildPhase();
             return;
         }
         currentTurnIdx = resourceTurnIdx;
@@ -892,7 +1003,194 @@ public class GamePanel extends Application {
             resourcesDoneBtn.setDisable(false);
         }
         refreshAllResourceRows();
+        refreshOwnedAndMaterials();
         refreshPhaseIndicators();
+    }
+
+    private void clearConnectionPath() {
+        if (connectionPathGroup != null) {
+            connectionPathGroup.getChildren().clear();
+        }
+    }
+
+    private void clearCityPopup() {
+        if (cityPopupGroup != null) {
+            cityPopupGroup.getChildren().clear();
+        }
+    }
+
+    private void showCityBuildPopup(City city) {
+        Player player = turnOrder.get(currentTurnIdx);
+        clearCityPopup();
+        int total = game.getTotalElektroToEnter(player, city);
+        if (total < 0) {
+            return;
+        }
+        PathResult pr = game.getBestPathForBuild(player, city);
+        List<Integer> weights = game.getEdgeWeightsAlongPath(pr.getPath());
+        int house = game.getCurrentEntryCost(city);
+        String pathExpr = weights.isEmpty() ? "0" : weights.stream().map(String::valueOf).collect(Collectors.joining(" + "));
+        VBox box = new VBox(6);
+        box.setStyle("-fx-background-color: #2a2a2a; -fx-padding: 10; -fx-background-radius: 8;");
+        Label name = new Label(city.getName());
+        name.setTextFill(Color.WHITE);
+        Label occ = new Label("Occupants: " + occupyingText(city));
+        occ.setTextFill(Color.WHITE);
+        Label pathPrice = new Label("Path: " + pathExpr);
+        pathPrice.setTextFill(Color.WHITE);
+        Label housePrice = new Label("City slot: " + (house < 0 ? "—" : house));
+        housePrice.setTextFill(Color.WHITE);
+        Label tot = new Label("Total: " + total);
+        tot.setTextFill(Color.LIGHTGREEN);
+        Button confirm = new Button("Confirm");
+        confirm.setDisable(!game.canPlayerEnterCity(player, city));
+        confirm.setOnAction(ev -> {
+            int costBefore = total;
+            if (!game.placeHouse(player, city)) {
+                showOutOfMoneyPopup();
+                return;
+            }
+            List<Line> lines = new ArrayList<>();
+            if (pr.getPath().size() >= 2) {
+                for (int i = 0; i < pr.getPath().size() - 1; i++) {
+                    City a = pr.getPath().get(i);
+                    City b = pr.getPath().get(i + 1);
+                    Line ln = new Line(a.getMapX(), a.getMapY(), b.getMapX(), b.getMapY());
+                    ln.setStroke(Color.RED);
+                    ln.setStrokeWidth(3);
+                    connectionPathGroup.getChildren().add(ln);
+                    lines.add(ln);
+                }
+            }
+            buildUndoStack.push(new BuildUndoStep(city, costBefore, lines));
+            updateCityStroke(city);
+            refreshCitiesCountRow();
+            refreshOwnedAndMaterials();
+            clearCityPopup();
+            if (player.getElektro() <= 0) {
+                showOutOfMoneyPopup();
+            }
+        });
+        box.getChildren().addAll(name, occ, pathPrice, housePrice, tot, confirm);
+        box.setLayoutX(city.getMapX() + 55);
+        box.setLayoutY(city.getMapY() - 70);
+        cityPopupGroup.getChildren().add(box);
+    }
+
+    private void showOutOfMoneyPopup() {
+        StackPane overlay = new StackPane();
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.5);");
+        VBox box = new VBox(12);
+        box.setAlignment(Pos.CENTER);
+        box.setStyle("-fx-background-color: #8B2222; -fx-padding: 24; -fx-background-radius: 12;");
+        Label msg = new Label("You have ran out of money!");
+        msg.setTextFill(Color.WHITE);
+        Button ok = new Button("Confirm");
+        ok.setOnAction(e -> rootStack.getChildren().remove(overlay));
+        box.getChildren().addAll(msg, ok);
+        overlay.getChildren().add(box);
+        rootStack.getChildren().add(overlay);
+    }
+
+    private void undoLastBuild() {
+        if (!buildPhaseActive || buildUndoStack.isEmpty()) return;
+        BuildUndoStep step = buildUndoStack.pop();
+        Player player = turnOrder.get(currentTurnIdx);
+        game.undoHouse(player, step.city, step.totalPaid);
+        for (Line ln : step.pathLines) {
+            connectionPathGroup.getChildren().remove(ln);
+        }
+        updateCityStroke(step.city);
+        refreshCitiesCountRow();
+        refreshOwnedAndMaterials();
+    }
+
+    private void finishBuildTurn() {
+        if (!buildPhaseActive) return;
+        clearCityPopup();
+        buildTurnIdx--;
+        if (buildTurnIdx < 0) {
+            buildPhaseActive = false;
+            if (buildActionsRow != null) {
+                buildActionsRow.setVisible(false);
+                buildActionsRow.setManaged(false);
+            }
+            if (buildCitiesBtn != null) {
+                buildCitiesBtn.setDisable(true);
+            }
+            startPowerCitiesPhase();
+            return;
+        }
+        currentTurnIdx = buildTurnIdx;
+        viewingPlayerIdx = buildTurnIdx;
+        refreshOwnedAndMaterials();
+        refreshPhaseIndicators();
+    }
+
+    /** Simplified bureaucracy: income then refill and round advance. */
+    private void startPowerCitiesPhase() {
+        phase = "Power Cities";
+        if (powerCitiesBtn != null) {
+            powerCitiesBtn.setDisable(false);
+        }
+        for (Player p : turnOrder) {
+            int cities = game.getConnectedCityCount(p);
+            int powered = Math.min(cities, p.getMaxProducibleCities());
+            int pay = game.getElektroForCitiesPowered(powered);
+            p.receive(pay);
+        }
+        game.endOfRound();
+        refreshCitiesCountRow();
+        refreshOwnedAndMaterials();
+        showRoundInterstitial();
+    }
+
+    private void showRoundInterstitial() {
+        TurnOrder.sortByCitiesThenLargestPlant(turnOrder, game);
+        refreshTurnHeader();
+        StackPane overlay = new StackPane();
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.92);");
+        VBox box = new VBox(24);
+        box.setAlignment(Pos.CENTER);
+        Label title = new Label("Round " + game.getRound());
+        title.setTextFill(Color.LIMEGREEN);
+        title.setStyle("-fx-font-size: 48px;");
+        try {
+            var url = getClass().getResource("/universcondensed_medium.ttf");
+            if (url != null) {
+                title.setFont(Font.loadFont(url.toExternalForm(), 48));
+            }
+        } catch (Exception ignored) {
+        }
+        StringBuilder orderText = new StringBuilder("Turn order:\n");
+        for (int i = 0; i < turnOrder.size(); i++) {
+            orderText.append((i + 1)).append(". ").append(turnOrder.get(i).getDisplayName()).append("\n");
+        }
+        Label orderLbl = new Label(orderText.toString());
+        orderLbl.setTextFill(Color.WHITE);
+        Label hint = new Label("Click anywhere to proceed");
+        hint.setTextFill(Color.GRAY);
+        box.getChildren().addAll(title, orderLbl, hint);
+        overlay.getChildren().add(box);
+        overlay.setOnMouseClicked(e -> {
+            rootStack.getChildren().remove(overlay);
+            phase = "Power Plant Auction";
+            if (auctionPhaseBtn != null) {
+                auctionPhaseBtn.setDisable(false);
+            }
+            if (resourcePhaseBtn != null) {
+                resourcePhaseBtn.setDisable(true);
+            }
+            if (powerCitiesBtn != null) {
+                powerCitiesBtn.setDisable(true);
+            }
+            currentTurnIdx = 0;
+            viewingPlayerIdx = 0;
+            refreshOwnedAndMaterials();
+            refreshPhaseIndicators();
+            bidStatus.setText("New round — power plant auction.");
+        });
+        rootStack.getChildren().add(overlay);
     }
 
     private void finalizeCurrentAuction() {
@@ -942,7 +1240,8 @@ public class GamePanel extends Application {
     /** If current player already owns a plant this round, they cannot be in the auction UI. */
     private void skipBoughtPlayersInAuction() {
         if (turnOrder.isEmpty()) return;
-        if ("Purchase Resources".equals(phase) || "Build / Other".equals(phase)) return;
+        if ("Purchase Resources".equals(phase) || "Build / Other".equals(phase)
+                || "Build Cities".equals(phase) || "Power Cities".equals(phase)) return;
         int guard = 0;
         while (guard < turnOrder.size() && boughtThisAuctionRound.get(currentTurnIdx)) {
             currentTurnIdx = (currentTurnIdx + 1) % turnOrder.size();
@@ -966,37 +1265,6 @@ public class GamePanel extends Application {
                 return;
             }
         }
-    }
-
-    private void showCityPopup(City city) {
-        Player current = turnOrder.get(currentTurnIdx);
-        int cost = game.getCurrentEntryCost(city);
-        StackPane overlay = new StackPane();
-        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
-        VBox popup = new VBox(10);
-        popup.setAlignment(Pos.CENTER);
-        popup.setPrefSize(270, 180);
-        popup.setStyle("-fx-background-color:#2A2A2A; -fx-background-radius:16; -fx-padding:12;");
-
-        Label name = new Label(city.getName());
-        Label c = new Label("Elektro Cost: " + (cost < 0 ? "Unavailable" : cost));
-        Label occ = new Label("Occupied by: " + occupyingText(city));
-        name.setTextFill(Color.WHITE); c.setTextFill(Color.WHITE); occ.setTextFill(Color.WHITE);
-
-        Button confirm = new Button("Confirm");
-        confirm.setDisable(cost < 0 || !game.canPlayerEnterCity(current, city));
-        confirm.setOnAction(e -> {
-            if (game.placeHouse(current, city)) {
-                updateCityStroke(city);
-                refreshCitiesCountRow();
-            }
-            rootStack.getChildren().remove(overlay);
-        });
-
-        popup.getChildren().addAll(name, c, occ, confirm);
-        overlay.getChildren().add(popup);
-        overlay.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
-        rootStack.getChildren().add(overlay);
     }
 
     private String occupyingText(City city) {

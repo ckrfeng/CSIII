@@ -6,13 +6,32 @@ package PowerGrid;
  */
 public final class ResourceRefill {
     // [step 1-3][players 2-6] -> { coal, oil, garbage, uranium }
+    // Players 3–5 per project spec; 2 and 6 use prior board-game style amounts.
     private static final int[][][] REFILL = {
         // Step 1
-        { { 2, 2, 1, 1 }, { 3, 3, 2, 1 }, { 4, 4, 3, 2 }, { 5, 4, 3, 2 }, { 5, 5, 4, 2 } },
+        {
+                { 3, 3, 2, 1 }, // 2 players
+                { 4, 2, 1, 1 }, // 3
+                { 5, 3, 2, 1 }, // 4
+                { 5, 4, 3, 2 }, // 5
+                { 6, 5, 4, 3 }  // 6
+        },
         // Step 2
-        { { 2, 2, 1, 1 }, { 3, 3, 2, 1 }, { 4, 4, 3, 2 }, { 5, 4, 3, 2 }, { 6, 5, 4, 3 } },
+        {
+                { 4, 3, 2, 1 },
+                { 5, 3, 2, 1 },
+                { 6, 4, 3, 2 },
+                { 7, 5, 3, 3 },
+                { 6, 5, 4, 3 }
+        },
         // Step 3
-        { { 3, 3, 2, 1 }, { 4, 4, 3, 2 }, { 5, 5, 4, 3 }, { 6, 5, 4, 3 }, { 7, 6, 5, 4 } }
+        {
+                { 3, 4, 3, 1 },
+                { 3, 4, 3, 1 },
+                { 4, 5, 4, 2 },
+                { 5, 6, 5, 2 },
+                { 7, 6, 5, 4 }
+        }
     };
 
     /** Refill amounts for given step and player count. Returns { coal, oil, garbage, uranium }. */

@@ -58,6 +58,15 @@ public class City {
         return name;
     }
 
+    /** Map image coordinates (center of city marker). */
+    public double getMapX() {
+        return x;
+    }
+
+    public double getMapY() {
+        return y;
+    }
+
     public void addOccupyingPlayer(int playerId) {
         if (playerId < 1 || playerId > 6) {
             throw new IllegalArgumentException("playerId must be between 1 and 6");
@@ -65,6 +74,11 @@ public class City {
         if (!occupyingPlayers.contains(playerId)) {
             occupyingPlayers.add(playerId);
         }
+    }
+
+    /** Remove a player's house (e.g. undo build). Returns true if removed. */
+    public boolean removeOccupyingPlayer(int playerId) {
+        return occupyingPlayers.remove(Integer.valueOf(playerId));
     }
 
     public List<Integer> getOccupyingPlayers() {
