@@ -129,6 +129,11 @@ public class PowerPlant {
         }
     }
 
+    /** Remove all stored resources (e.g. before redistributing in bureaucracy). */
+    public void clearAllStored() {
+        storedResources.clear();
+    }
+
     /** Max cities this plant can power this round given current stored resources. */
     public int getProducibleCities() {
         if (isEcological()) return citiesSupplied;
