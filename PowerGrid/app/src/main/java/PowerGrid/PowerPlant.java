@@ -134,11 +134,13 @@ public class PowerPlant {
         storedResources.clear();
     }
 
-    /** Max cities this plant can power this round given current stored resources. */
+    /**
+     * Max cities this plant can power this round given current stored resources.
+     * One activation consumes {@link #resourcesRequired} and can supply up to {@link #citiesSupplied} cities.
+     */
     public int getProducibleCities() {
         if (isEcological()) return citiesSupplied;
-        int total = getTotalStored();
-        int batches = total / resourcesRequired;
-        return Math.min(batches, citiesSupplied);
+        if (getTotalStored() < resourcesRequired) return 0;
+        return citiesSupplied;
     }
 }

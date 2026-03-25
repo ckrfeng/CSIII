@@ -1550,6 +1550,11 @@ public class GamePanel extends Application {
         t.setTextFill(Color.WHITE);
         t.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
 
+        Label capHint = new Label();
+        capHint.setTextFill(Color.LIGHTGRAY);
+        capHint.setWrapText(true);
+        capHint.setMaxWidth(560);
+
         List<City> ownedCities = new ArrayList<>(game.getCitiesForPlayer(powerWizardPlayer));
         ownedCities.sort(Comparator.comparing(City::getName, String.CASE_INSENSITIVE_ORDER));
 
@@ -1580,6 +1585,15 @@ public class GamePanel extends Application {
                         .map(City::getName)
                         .collect(Collectors.joining(", ")));
             }
+            int cap = maxCitiesSelectableForPower(powerWizardPlayer, powerPlantPickIndices);
+            int owned = game.getConnectedCityCount(powerWizardPlayer);
+            if (cap == 0) {
+                capHint.setText("No capacity: chosen power plants cannot supply cities (need fuel on non-eco plants).");
+            } else {
+                capHint.setText(String.format(
+                        "Chosen plants can power up to %d cit%s this round (you own %d). Selected: %d / %d.",
+                        cap, cap == 1 ? "y" : "ies", owned, powerCityPickSet.size(), cap));
+            }
         };
 
         for (City city : ownedCities) {
@@ -1609,7 +1623,7 @@ public class GamePanel extends Application {
         cityScroll.setStyle("-fx-background: transparent;");
 
         Button confirm = new Button("Confirm");
-        VBox box = new VBox(12, t, cityScroll, poweringBox, confirm);
+        VBox box = new VBox(12, t, capHint, cityScroll, poweringBox, confirm);
         box.setAlignment(Pos.CENTER);
         box.setPickOnBounds(true);
         root.getChildren().setAll(box);
