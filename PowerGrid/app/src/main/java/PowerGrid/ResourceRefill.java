@@ -7,6 +7,7 @@ package PowerGrid;
 public final class ResourceRefill {
     // [step 1-3][players 2-6] -> { coal, oil, garbage, uranium }
     // Players 3–5 per project spec; 2 and 6 use prior board-game style amounts.
+    /** { coal, oil, garbage, uranium } per step and player count. 3–5 players per project table; 2 and 6 unchanged from prior defaults. */
     private static final int[][][] REFILL = {
         // Step 1
         {

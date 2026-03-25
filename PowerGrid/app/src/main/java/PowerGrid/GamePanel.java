@@ -3,10 +3,13 @@ package PowerGrid;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -22,6 +25,7 @@ import javafx.scene.Group;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.text.Font;
 import javafx.scene.image.Image;
@@ -93,8 +97,8 @@ public class GamePanel extends Application {
     }
 
     private PowerWizardPane powerWizardPane = PowerWizardPane.IDLE;
-    private final Set<City> powerCityPickSet = new HashSet<>();
-    private final Set<Integer> powerPlantPickIndices = new HashSet<>();
+    private final LinkedHashSet<City> powerCityPickSet = new LinkedHashSet<>();
+    private final Set<Integer> powerPlantPickIndices = new LinkedHashSet<>();
     private Player powerWizardPlayer;
 
     /** Owned / auction power plant card visuals scaled up 30%. */
@@ -553,26 +557,6 @@ public class GamePanel extends Application {
             showCityBuildPopup(city);
             return;
         }
-        if (powerWizardPane == PowerWizardPane.SELECT_CITIES && powerWizardPlayer != null) {
-            if (!city.getOccupyingPlayers().contains(powerWizardPlayer.getPlayerId())) {
-                return;
-            }
-            int maxPick = maxCitiesSelectableForPower(powerWizardPlayer, powerPlantPickIndices);
-            if (powerCityPickSet.contains(city)) {
-                powerCityPickSet.remove(city);
-                updateCityStroke(city);
-                return;
-            }
-            if (powerCityPickSet.size() >= maxPick) {
-                return;
-            }
-            powerCityPickSet.add(city);
-            if (city.getRingCircle() != null) {
-                city.getRingCircle().setStroke(Color.LIMEGREEN);
-                city.getRingCircle().setStrokeWidth(5);
-            }
-            return;
-        }
         if ("Power Plant Auction".equals(phase) || "Purchase Resources".equals(phase)) {
             return;
         }
@@ -832,6 +816,7 @@ public class GamePanel extends Application {
                 iv.setFitWidth(OWNED_PLANT_IMAGE);
                 iv.setFitHeight(OWNED_PLANT_IMAGE);
                 StackPane.setAlignment(iv, Pos.CENTER);
+                iv.setMouseTransparent(true);
                 slot.getChildren().add(iv);
             } else {
                 Label empty = new Label("Empty");
@@ -841,6 +826,55 @@ public class GamePanel extends Application {
         }
         refreshPlayerMaterials();
         refreshPhaseIndicators();
+    }
+
+    /** One-line summary for power-city plant picker (no image). */
+    private static String powerPlantSelectionLine(PowerPlant pl) {
+        int perRun = pl.getResourcesRequired();
+        int cap = pl.getCitiesSupplied();
+        int stored = pl.getTotalStored();
+        if (pl.isEcological()) {
+            return String.format("#%d (eco) — %d materials per run — up to %d cities — %d on plant",
+                    pl.getNumber(), perRun, cap, stored);
+        }
+        if (pl.isHybrid()) {
+            return String.format("#%d (hybrid) — %d materials per run — up to %d cities — %d on plant",
+                    pl.getNumber(), perRun, cap, stored);
+        }
+        String fuel = pl.getPrimaryResource() != null ? pl.getPrimaryResource().name().toLowerCase() : "";
+        return String.format("#%d (%s) — %d materials per run — up to %d cities — %d on plant",
+                pl.getNumber(), fuel, perRun, cap, stored);
+    }
+
+    private static String formatResourcePoolDescription(String prefix, Map<ResourceType, Integer> pool) {
+        StringBuilder sb = new StringBuilder(prefix);
+        boolean any = false;
+        for (ResourceType t : ResourceType.values()) {
+            int c = pool.getOrDefault(t, 0);
+            if (c > 0) {
+                if (any) sb.append(", ");
+                sb.append(t.name().toLowerCase()).append(" ").append(c);
+                any = true;
+            }
+        }
+        if (!any) sb.append("none");
+        return sb.toString();
+    }
+
+    private static boolean committedAllocationsMatchPool(
+            Map<ResourceType, Integer> initialPool, List<EnumMap<ResourceType, Integer>> committed) {
+        EnumMap<ResourceType, Integer> sum = new EnumMap<>(ResourceType.class);
+        for (EnumMap<ResourceType, Integer> m : committed) {
+            for (Map.Entry<ResourceType, Integer> e : m.entrySet()) {
+                sum.merge(e.getKey(), e.getValue(), Integer::sum);
+            }
+        }
+        for (ResourceType t : ResourceType.values()) {
+            if (sum.getOrDefault(t, 0) != initialPool.getOrDefault(t, 0)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void refreshPlayerMaterials() {
@@ -1218,212 +1252,188 @@ public class GamePanel extends Application {
         VBox root = new VBox(16);
         root.setAlignment(Pos.TOP_CENTER);
         root.setPadding(new Insets(20));
-        root.setMaxWidth(520);
+        root.setMaxWidth(640);
 
         Label materialsTitle = new Label("Change materials on power plants");
         materialsTitle.setTextFill(Color.WHITE);
         materialsTitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
 
-        VBox materialsBody = new VBox(10);
-        materialsBody.setAlignment(Pos.TOP_LEFT);
-
-        EnumMap<ResourceType, Integer> pool = new EnumMap<>(ResourceType.class);
         Player p = powerWizardPlayer;
+        EnumMap<ResourceType, Integer> initialPool = new EnumMap<>(ResourceType.class);
         for (PowerPlant pl : p.getPowerPlants()) {
             for (Map.Entry<ResourceType, Integer> e : pl.getStoredResources().entrySet()) {
-                pool.merge(e.getKey(), e.getValue(), Integer::sum);
+                initialPool.merge(e.getKey(), e.getValue(), Integer::sum);
             }
             pl.clearAllStored();
         }
+        String poolLine = formatResourcePoolDescription("Total resources available: ", initialPool);
 
-        final int[] materialPlantIdx = {0};
-        Label poolLabel = new Label();
-        poolLabel.setTextFill(Color.LIGHTGRAY);
-        Label errMaterials = new Label();
-        errMaterials.setTextFill(Color.RED);
+        List<PowerPlant> plants = p.getPowerPlants();
+        int n = plants.size();
+        boolean[] plantReady = new boolean[n];
+        List<EnumMap<ResourceType, Integer>> committed = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            committed.add(new EnumMap<>(ResourceType.class));
+        }
 
-        Runnable refreshPoolLabel = () -> {
-            StringBuilder sb = new StringBuilder("Total resources available: ");
-            boolean any = false;
-            for (ResourceType t : ResourceType.values()) {
-                int c = pool.getOrDefault(t, 0);
-                if (c > 0) {
-                    if (any) sb.append(", ");
-                    sb.append(t.name().toLowerCase()).append(" ").append(c);
-                    any = true;
+        Label sumErr = new Label();
+        sumErr.setTextFill(Color.RED);
+
+        Button topConfirm = new Button("Confirm");
+        topConfirm.setDisable(true);
+
+        Runnable updateTopButton = () -> {
+            for (int i = 0; i < n; i++) {
+                if (!plantReady[i]) {
+                    topConfirm.setDisable(true);
+                    return;
                 }
             }
-            if (!any) sb.append("none");
-            poolLabel.setText(sb.toString());
+            topConfirm.setDisable(false);
         };
-        refreshPoolLabel.run();
 
-        Runnable[] showMaterialStep = new Runnable[1];
-        showMaterialStep[0] = () -> {
-            materialsBody.getChildren().clear();
-            errMaterials.setText("");
-            List<PowerPlant> plants = p.getPowerPlants();
-            if (materialPlantIdx[0] >= plants.size()) {
-                powerWizardPane = PowerWizardPane.SELECT_PLANTS;
-                root.getChildren().clear();
-                buildSelectPlantsPane(root, overlay);
-                return;
+        VBox plantRows = new VBox(20);
+        plantRows.setFillWidth(true);
+
+        for (int pi = 0; pi < n; pi++) {
+            PowerPlant plant = plants.get(pi);
+            final int idx = pi;
+            VBox card = new VBox(8);
+            card.setStyle("-fx-background-color: #2a2a2a; -fx-padding: 12; -fx-background-radius: 8;");
+
+            if (!plant.isEcological()) {
+                String cid = String.valueOf(plant.getNumber());
+                ImageView img = new ImageView(loadCardImage(cid));
+                img.setPreserveRatio(true);
+                img.setFitWidth(OWNED_PLANT_IMAGE * 0.95);
+                img.setFitHeight(OWNED_PLANT_IMAGE * 0.95);
+                card.getChildren().add(img);
             }
-            PowerPlant plant = plants.get(materialPlantIdx[0]);
-            boolean first = materialPlantIdx[0] == 0;
-            Label head = new Label(
-                    first ? "How many materials should go on this plant?" : ("Plant " + plant.getNumber() + " — materials"));
-            head.setTextFill(Color.WHITE);
 
-            TextField amountField = new TextField();
-            TextField coalField = new TextField();
-            TextField oilField = new TextField();
+            Label q = new Label("How many materials should go on this plant?");
+            q.setTextFill(Color.WHITE);
+            Label tot = new Label(poolLine);
+            tot.setTextFill(Color.LIGHTGRAY);
+            tot.setWrapText(true);
+
+            Button rowConfirm = new Button("Confirm");
 
             if (plant.isEcological()) {
-                Label skip = new Label("No resources needed — use Next.");
-                skip.setTextFill(Color.LIGHTGRAY);
-                materialsBody.getChildren().addAll(head, skip, poolLabel, errMaterials);
-                Button nextEco = new Button("Next");
-                nextEco.setOnAction(e -> {
-                    materialPlantIdx[0]++;
-                    showMaterialStep[0].run();
+                Label res = new Label("Resource: none (ecological)");
+                res.setTextFill(Color.LIGHTGRAY);
+                Label eco = new Label("No resources needed.");
+                eco.setTextFill(Color.LIGHTGRAY);
+                rowConfirm.setOnAction(e -> {
+                    plantReady[idx] = !plantReady[idx];
+                    committed.get(idx).clear();
+                    rowConfirm.setText(plantReady[idx] ? "Unconfirm" : "Confirm");
+                    sumErr.setText("");
+                    updateTopButton.run();
                 });
-                Button confirmEco = new Button("Confirm");
-                confirmEco.setOnAction(e -> {
-                    distributeRemainingPoolToPlants(p, pool);
-                    powerWizardPane = PowerWizardPane.SELECT_PLANTS;
-                    root.getChildren().clear();
-                    buildSelectPlantsPane(root, overlay);
+                card.getChildren().addAll(q, tot, res, eco, rowConfirm);
+            } else if (plant.isHybrid()) {
+                Label res = new Label("Resource: coal, oil");
+                res.setTextFill(Color.LIGHTGRAY);
+                TextField coalField = new TextField();
+                coalField.setPromptText("Coal amount");
+                TextField oilField = new TextField();
+                oilField.setPromptText("Oil amount");
+                rowConfirm.setOnAction(e -> {
+                    if (plantReady[idx]) {
+                        plantReady[idx] = false;
+                        committed.get(idx).clear();
+                        rowConfirm.setText("Confirm");
+                        coalField.setDisable(false);
+                        oilField.setDisable(false);
+                    } else {
+                        int wantCoal;
+                        int wantOil;
+                        try {
+                            wantCoal = coalField.getText().isBlank() ? 0 : Integer.parseInt(coalField.getText().trim());
+                            wantOil = oilField.getText().isBlank() ? 0 : Integer.parseInt(oilField.getText().trim());
+                        } catch (NumberFormatException ex) {
+                            return;
+                        }
+                        if (wantCoal < 0 || wantOil < 0) return;
+                        if (wantCoal + wantOil > plant.getStorageCapacity()) return;
+                        committed.get(idx).clear();
+                        if (wantCoal > 0) committed.get(idx).put(ResourceType.COAL, wantCoal);
+                        if (wantOil > 0) committed.get(idx).put(ResourceType.OIL, wantOil);
+                        plantReady[idx] = true;
+                        rowConfirm.setText("Unconfirm");
+                        coalField.setDisable(true);
+                        oilField.setDisable(true);
+                    }
+                    sumErr.setText("");
+                    updateTopButton.run();
                 });
-                materialsBody.getChildren().add(new HBox(8, nextEco, confirmEco));
+                card.getChildren().addAll(q, tot, res, coalField, oilField, rowConfirm);
+            } else {
+                ResourceType rt = plant.getPrimaryResource();
+                Label res = new Label("Resource: " + (rt != null ? rt.name().toLowerCase() : ""));
+                res.setTextFill(Color.LIGHTGRAY);
+                TextField amountField = new TextField();
+                amountField.setPromptText("Amount");
+                rowConfirm.setOnAction(e -> {
+                    if (plantReady[idx]) {
+                        plantReady[idx] = false;
+                        committed.get(idx).clear();
+                        rowConfirm.setText("Confirm");
+                        amountField.setDisable(false);
+                    } else {
+                        int want;
+                        try {
+                            want = amountField.getText().isBlank() ? 0 : Integer.parseInt(amountField.getText().trim());
+                        } catch (NumberFormatException ex) {
+                            return;
+                        }
+                        if (want < 0 || want > plant.getStorageCapacity()) return;
+                        committed.get(idx).clear();
+                        if (rt != null && want > 0) {
+                            committed.get(idx).put(rt, want);
+                        }
+                        plantReady[idx] = true;
+                        rowConfirm.setText("Unconfirm");
+                        amountField.setDisable(true);
+                    }
+                    sumErr.setText("");
+                    updateTopButton.run();
+                });
+                card.getChildren().addAll(q, tot, res, amountField, rowConfirm);
+            }
+            plantRows.getChildren().add(card);
+        }
+
+        if (n == 0) {
+            topConfirm.setDisable(false);
+        }
+
+        topConfirm.setOnAction(e -> {
+            sumErr.setText("");
+            if (!committedAllocationsMatchPool(initialPool, committed)) {
+                sumErr.setText("Does not add up to total!");
                 return;
             }
-
-            if (plant.isHybrid()) {
-                Label cL = new Label("Coal");
-                cL.setTextFill(Color.WHITE);
-                Label oL = new Label("Oil");
-                oL.setTextFill(Color.WHITE);
-                materialsBody.getChildren().addAll(head, poolLabel, cL, coalField, oL, oilField, errMaterials);
-                Button nextH = new Button("Next");
-                nextH.setOnAction(e -> {
-                    errMaterials.setText("");
-                    int wantCoal;
-                    int wantOil;
-                    try {
-                        wantCoal = coalField.getText().isBlank() ? 0 : Integer.parseInt(coalField.getText().trim());
-                        wantOil = oilField.getText().isBlank() ? 0 : Integer.parseInt(oilField.getText().trim());
-                    } catch (NumberFormatException ex) {
-                        errMaterials.setText("Enter valid numbers.");
-                        return;
-                    }
-                    if (wantCoal < 0 || wantOil < 0) {
-                        errMaterials.setText("Enter valid numbers.");
-                        return;
-                    }
-                    if (wantCoal > pool.getOrDefault(ResourceType.COAL, 0) || wantOil > pool.getOrDefault(ResourceType.OIL, 0)) {
-                        errMaterials.setText("Not enough materials!");
-                        return;
-                    }
-                    if (wantCoal + wantOil > plant.getStorageCapacity() - plant.getTotalStored()) {
-                        errMaterials.setText("Not enough materials!");
-                        return;
-                    }
-                    pool.merge(ResourceType.COAL, -wantCoal, Integer::sum);
-                    pool.merge(ResourceType.OIL, -wantOil, Integer::sum);
-                    plant.addStored(ResourceType.COAL, wantCoal);
-                    plant.addStored(ResourceType.OIL, wantOil);
-                    refreshPoolLabel.run();
-                    materialPlantIdx[0]++;
-                    showMaterialStep[0].run();
-                });
-                Button confirmH = new Button("Confirm");
-                confirmH.setOnAction(e -> {
-                    distributeRemainingPoolToPlants(p, pool);
-                    powerWizardPane = PowerWizardPane.SELECT_PLANTS;
-                    root.getChildren().clear();
-                    buildSelectPlantsPane(root, overlay);
-                });
-                materialsBody.getChildren().add(new HBox(8, nextH, confirmH));
-                return;
+            for (int i = 0; i < n; i++) {
+                PowerPlant pl = plants.get(i);
+                for (Map.Entry<ResourceType, Integer> ent : committed.get(i).entrySet()) {
+                    pl.addStored(ent.getKey(), ent.getValue());
+                }
             }
-
-            ResourceType rt = plant.getPrimaryResource();
-            Label hint = new Label("Resource: " + (rt != null ? rt.name().toLowerCase() : ""));
-            hint.setTextFill(Color.LIGHTGRAY);
-            amountField.setPromptText("Amount");
-            Button nextBtn = new Button("Next");
-            nextBtn.setOnAction(e -> {
-                errMaterials.setText("");
-                int want;
-                try {
-                    want = amountField.getText().isBlank() ? 0 : Integer.parseInt(amountField.getText().trim());
-                } catch (NumberFormatException ex) {
-                    errMaterials.setText("Enter a valid number.");
-                    return;
-                }
-                if (want < 0) {
-                    errMaterials.setText("Enter a valid number.");
-                    return;
-                }
-                if (want > pool.getOrDefault(rt, 0)) {
-                    errMaterials.setText("Not enough materials!");
-                    return;
-                }
-                if (want > plant.getStorageCapacity() - plant.getTotalStored()) {
-                    errMaterials.setText("Not enough materials!");
-                    return;
-                }
-                pool.merge(rt, -want, Integer::sum);
-                plant.addStored(rt, want);
-                refreshPoolLabel.run();
-                materialPlantIdx[0]++;
-                showMaterialStep[0].run();
-            });
-            Button confirmBtn = new Button("Confirm");
-            confirmBtn.setOnAction(e -> {
-                distributeRemainingPoolToPlants(p, pool);
-                powerWizardPane = PowerWizardPane.SELECT_PLANTS;
-                root.getChildren().clear();
-                buildSelectPlantsPane(root, overlay);
-            });
-            HBox row = new HBox(8, amountField, nextBtn, confirmBtn);
-            materialsBody.getChildren().addAll(head, poolLabel, hint, row, errMaterials);
-        };
-
-        Button topConfirmMaterials = new Button("Confirm");
-        topConfirmMaterials.setOnAction(e -> {
-            distributeRemainingPoolToPlants(p, pool);
             powerWizardPane = PowerWizardPane.SELECT_PLANTS;
             root.getChildren().clear();
             buildSelectPlantsPane(root, overlay);
         });
 
-        materialsBody.getChildren().clear();
-        root.getChildren().addAll(materialsTitle, topConfirmMaterials, materialsBody);
-        showMaterialStep[0].run();
+        ScrollPane scroll = new ScrollPane(plantRows);
+        scroll.setFitToWidth(true);
+        scroll.setPrefViewportHeight(440);
+        scroll.setStyle("-fx-background: rgba(0,0,0,0.3); -fx-background-color: transparent;");
 
+        root.getChildren().addAll(materialsTitle, scroll, topConfirm, sumErr);
         StackPane.setAlignment(root, Pos.CENTER);
         overlay.getChildren().add(root);
         rootStack.getChildren().add(overlay);
-    }
-
-    private void distributeRemainingPoolToPlants(Player player, Map<ResourceType, Integer> pool) {
-        for (ResourceType t : ResourceType.values()) {
-            int left = pool.getOrDefault(t, 0);
-            while (left > 0) {
-                boolean placed = false;
-                for (PowerPlant pl : player.getPowerPlants()) {
-                    if (!pl.canStore(t)) continue;
-                    while (left > 0 && pl.getTotalStored() < pl.getStorageCapacity()) {
-                        pl.addStored(t, 1);
-                        left--;
-                        placed = true;
-                    }
-                }
-                if (!placed) break;
-            }
-        }
     }
 
     private int maxCitiesSelectableForPower(Player player, Set<Integer> plantIndices) {
@@ -1454,57 +1464,74 @@ public class GamePanel extends Application {
 
     private void buildSelectPlantsPane(VBox root, StackPane overlay) {
         powerWizardPane = PowerWizardPane.SELECT_PLANTS;
-        overlay.setPickOnBounds(false);
-        overlay.setStyle("-fx-background-color: transparent;");
+        overlay.setPickOnBounds(true);
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.82);");
         powerPlantPickIndices.clear();
-        Label t = new Label("Click the power plants you want to use");
+        root.setMaxWidth(640);
+
+        Label t = new Label("Select power plants to use");
         t.setTextFill(Color.WHITE);
         t.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
-        Label err = new Label();
-        err.setTextFill(Color.RED);
-        Button confirm = new Button("Confirm");
-        VBox box = new VBox(12, t, confirm, err);
-        box.setAlignment(Pos.CENTER);
-        box.setPickOnBounds(true);
-        root.getChildren().setAll(box);
+        Label hint = new Label("Each row shows: materials per run, max cities, current stock. Click to toggle (green = selected).");
+        hint.setTextFill(Color.LIGHTGRAY);
+        hint.setWrapText(true);
+        hint.setMaxWidth(580);
 
-        Runnable refreshPlantOutlines = () -> {
-            for (int i = 0; i < ownedPlantsRow.getChildren().size(); i++) {
-                if (!(ownedPlantsRow.getChildren().get(i) instanceof StackPane slot)) continue;
+        List<PowerPlant> plants = powerWizardPlayer.getPowerPlants();
+        List<Button> plantButtons = new ArrayList<>();
+        Runnable refreshPlantButtons = () -> {
+            for (int i = 0; i < plantButtons.size(); i++) {
+                Button b = plantButtons.get(i);
                 boolean on = powerPlantPickIndices.contains(i);
-                slot.setStyle(on
-                        ? "-fx-background-color:#333; -fx-padding:4; -fx-border-color: limegreen; -fx-border-width: 3;"
-                        : "-fx-background-color:#333; -fx-padding:4;");
+                b.setStyle(on
+                        ? "-fx-background-color: #1a3d1a; -fx-text-fill: white; -fx-border-color: limegreen; -fx-border-width: 2;"
+                        : "-fx-background-color: #444; -fx-text-fill: white;");
             }
         };
 
-        Player p = powerWizardPlayer;
-        for (int i = 0; i < p.getPowerPlants().size() && i < ownedPlantsRow.getChildren().size(); i++) {
+        VBox plantList = new VBox(8);
+        for (int i = 0; i < plants.size(); i++) {
             final int idx = i;
-            StackPane slot = (StackPane) ownedPlantsRow.getChildren().get(idx);
-            slot.setOnMouseClicked(ev -> {
-                if (powerWizardPane != PowerWizardPane.SELECT_PLANTS) return;
+            PowerPlant pl = plants.get(idx);
+            Button b = new Button(powerPlantSelectionLine(pl));
+            b.setWrapText(true);
+            b.setMaxWidth(600);
+            b.setAlignment(Pos.CENTER_LEFT);
+            b.setOnAction(ev -> {
                 if (powerPlantPickIndices.contains(idx)) {
                     powerPlantPickIndices.remove(idx);
                 } else {
                     powerPlantPickIndices.add(idx);
                 }
-                refreshPlantOutlines.run();
-                ev.consume();
+                refreshPlantButtons.run();
             });
+            plantButtons.add(b);
+            plantList.getChildren().add(b);
         }
-        refreshPlantOutlines.run();
+        refreshPlantButtons.run();
+
+        ScrollPane plantScroll = new ScrollPane(plantList);
+        plantScroll.setFitToWidth(true);
+        plantScroll.setPrefViewportHeight(280);
+        plantScroll.setStyle("-fx-background: transparent;");
+
+        Label err = new Label();
+        err.setTextFill(Color.RED);
+        Button confirm = new Button("Confirm");
+        VBox box = new VBox(12, t, hint, plantScroll, confirm, err);
+        box.setAlignment(Pos.CENTER);
+        box.setPickOnBounds(true);
+        root.getChildren().setAll(box);
+        StackPane.setAlignment(root, Pos.CENTER);
+
+        Player pwc = powerWizardPlayer;
+        refreshOwnedAndMaterials();
 
         confirm.setOnAction(e -> {
             err.setText("");
-            if (!selectedPlantsHaveEnoughFuel(p, powerPlantPickIndices)) {
-                err.setText("Not enough materials!");
+            if (!selectedPlantsHaveEnoughFuel(pwc, powerPlantPickIndices)) {
+                err.setText("Not enough resources!");
                 return;
-            }
-            for (int i = 0; i < ownedPlantsRow.getChildren().size(); i++) {
-                if (ownedPlantsRow.getChildren().get(i) instanceof StackPane slot) {
-                    slot.setOnMouseClicked(null);
-                }
             }
             powerWizardPane = PowerWizardPane.SELECT_CITIES;
             root.getChildren().clear();
@@ -1515,19 +1542,78 @@ public class GamePanel extends Application {
     private void buildSelectCitiesPane(VBox root, StackPane overlay) {
         powerWizardPane = PowerWizardPane.SELECT_CITIES;
         powerCityPickSet.clear();
-        overlay.setPickOnBounds(false);
-        overlay.setStyle("-fx-background-color: transparent;");
-        for (City c : game.getCities()) {
-            updateCityStroke(c);
-        }
-        Label t = new Label("Click the cities you want to power");
+        overlay.setPickOnBounds(true);
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.82);");
+        root.setMaxWidth(640);
+
+        Label t = new Label("Select cities to power");
         t.setTextFill(Color.WHITE);
         t.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+
+        List<City> ownedCities = new ArrayList<>(game.getCitiesForPlayer(powerWizardPlayer));
+        ownedCities.sort(Comparator.comparing(City::getName, String.CASE_INSENSITIVE_ORDER));
+
+        Map<City, Button> cityToBtn = new LinkedHashMap<>();
+        VBox cityListVBox = new VBox(6);
+        for (City city : ownedCities) {
+            Button b = new Button(city.getName());
+            b.setPrefWidth(420);
+            cityToBtn.put(city, b);
+            cityListVBox.getChildren().add(b);
+        }
+
+        Label poweringList = new Label("Powering: (none)");
+        poweringList.setTextFill(Color.WHITE);
+        poweringList.setWrapText(true);
+
+        Runnable refreshCityPicks = () -> {
+            for (Map.Entry<City, Button> e : cityToBtn.entrySet()) {
+                boolean on = powerCityPickSet.contains(e.getKey());
+                e.getValue().setStyle(on
+                        ? "-fx-background-color: #1a3d1a; -fx-text-fill: white; -fx-border-color: limegreen; -fx-border-width: 2;"
+                        : "-fx-background-color: #444; -fx-text-fill: white;");
+            }
+            if (powerCityPickSet.isEmpty()) {
+                poweringList.setText("Powering: (none)");
+            } else {
+                poweringList.setText("Powering: " + powerCityPickSet.stream()
+                        .map(City::getName)
+                        .collect(Collectors.joining(", ")));
+            }
+        };
+
+        for (City city : ownedCities) {
+            Button b = cityToBtn.get(city);
+            b.setOnAction(ev -> {
+                int max = maxCitiesSelectableForPower(powerWizardPlayer, powerPlantPickIndices);
+                if (powerCityPickSet.contains(city)) {
+                    powerCityPickSet.remove(city);
+                } else {
+                    if (powerCityPickSet.size() >= max) {
+                        return;
+                    }
+                    powerCityPickSet.add(city);
+                }
+                refreshCityPicks.run();
+            });
+        }
+        refreshCityPicks.run();
+
+        VBox poweringBox = new VBox(6, poweringList);
+        poweringBox.setStyle("-fx-background-color: #2a2a2a; -fx-padding: 10; -fx-background-radius: 8;");
+        poweringBox.setMaxWidth(480);
+
+        ScrollPane cityScroll = new ScrollPane(cityListVBox);
+        cityScroll.setFitToWidth(true);
+        cityScroll.setPrefViewportHeight(240);
+        cityScroll.setStyle("-fx-background: transparent;");
+
         Button confirm = new Button("Confirm");
-        VBox box = new VBox(12, t, confirm);
+        VBox box = new VBox(12, t, cityScroll, poweringBox, confirm);
         box.setAlignment(Pos.CENTER);
         box.setPickOnBounds(true);
         root.getChildren().setAll(box);
+        StackPane.setAlignment(root, Pos.CENTER);
 
         confirm.setOnAction(e -> {
             int max = maxCitiesSelectableForPower(powerWizardPlayer, powerPlantPickIndices);
@@ -1537,9 +1623,6 @@ public class GamePanel extends Application {
             int pay = game.getElektroForCitiesPowered(powerCityPickSet.size());
             applyPowerConsumption(powerWizardPlayer, powerPlantPickIndices, powerCityPickSet.size());
             powerWizardPlayer.receive(pay);
-            for (City c : powerCityPickSet) {
-                updateCityStroke(c);
-            }
             powerCityPickSet.clear();
             powerWizardPane = PowerWizardPane.EARNINGS;
             overlay.setPickOnBounds(true);
