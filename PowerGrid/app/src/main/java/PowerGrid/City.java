@@ -54,7 +54,7 @@ public class City {
         return visualNode;
     }
 
-    /** City marker ring (for temporary highlights during power-city selection). */
+    // City marker ring (for temporary highlights during power-city selection)
     public Circle getRingCircle() {
         return ring;
     }
