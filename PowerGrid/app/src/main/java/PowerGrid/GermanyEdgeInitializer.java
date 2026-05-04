@@ -5,9 +5,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * All Germany map connection edges (two-way). Weights are connection costs in Elektro.
- */
 public final class GermanyEdgeInitializer {
 
     private GermanyEdgeInitializer() {}
@@ -19,7 +16,6 @@ public final class GermanyEdgeInitializer {
             byNorm.put(normalize(c.getName()), c);
         }
 
-        // (cityA, cityB, weight) — undirected
         String[][] pairs = {
                 { "Flensburg", "Kiel", "4" },
                 { "Kiel", "Lubeck", "4" },
@@ -123,7 +119,6 @@ public final class GermanyEdgeInitializer {
     private static City city(Map<String, City> byNorm, String name) {
         City c = byNorm.get(normalize(name));
         if (c != null) return c;
-        // aliases
         String n = normalize(name);
         if ("frankfurt-d".equals(n)) return byNorm.get(normalize("Frankfurt-O"));
         if ("mannhelm".equals(n)) return byNorm.get(normalize("Mannheim"));

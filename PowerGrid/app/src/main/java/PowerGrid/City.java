@@ -11,13 +11,12 @@ import javafx.scene.paint.Stop;
 import javafx.scene.shape.Circle;
 
 public class City {
-    private String name; //Name of the city
-    private boolean isInteractable; //Determines whether or not a player can click a city to build in it during a turn
-    private double x, y; //Location of the City
-    private Group visualNode; // VisualNode is the UI Node on the pannable map
+    private String name;
+    private boolean isInteractable;
+    private double x, y;
+    private Group visualNode;
     private Circle ring;
 
-    // stores the players that are occupying the city, integers 1-6 where 1= player 1, 2=player 2, etc
     private final List<Integer> occupyingPlayers = new ArrayList<>();
 
     public City(String name, double x, double y) {
@@ -31,7 +30,6 @@ public class City {
     private void createVisual() {
         visualNode = new Group();
 
-        // Circle centered at (0,0) so layoutX/layoutY place the center at (x,y)
         Circle circle = new Circle(45, Color.TRANSPARENT);
         this.ring = circle;
 
@@ -54,7 +52,6 @@ public class City {
         return visualNode;
     }
 
-    // City marker ring (for temporary highlights during power-city selection)
     public Circle getRingCircle() {
         return ring;
     }
@@ -63,7 +60,6 @@ public class City {
         return name;
     }
 
-    /** Map image coordinates (center of city marker). */
     public double getMapX() {
         return x;
     }
@@ -81,7 +77,6 @@ public class City {
         }
     }
 
-    /** Remove a player's house (e.g. undo build). Returns true if removed. */
     public boolean removeOccupyingPlayer(int playerId) {
         return occupyingPlayers.remove(Integer.valueOf(playerId));
     }

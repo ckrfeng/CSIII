@@ -10,17 +10,10 @@ import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
 
-/**
- * Shortest paths on an undirected weighted graph (connection costs between cities).
- */
 public final class DijkstraPathfinder {
 
     private DijkstraPathfinder() {}
 
-    /**
-     * @return total connection cost along edges and ordered path of cities from {@code from} to {@code to} (inclusive).
-     *         Empty if unreachable.
-     */
     public static PathResult shortestPath(City from, City to, Map<City, List<Edge>> adjacency) {
         if (from == null || to == null || adjacency == null) {
             return PathResult.unreachable();
@@ -74,7 +67,6 @@ public final class DijkstraPathfinder {
         return new PathResult(dist.get(to), path);
     }
 
-    /** Connection costs for each consecutive pair along the path (empty if length &lt; 2). */
     public static List<Integer> edgeWeightsAlongPath(List<City> path, Map<City, List<Edge>> adjacency) {
         if (path == null || path.size() < 2) return List.of();
         List<Integer> weights = new ArrayList<>();

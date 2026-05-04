@@ -6,10 +6,6 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Resource market: priced slots per resource type and a supply.
- * Players buy from slots (pay slot price); used tokens return to supply; refill places supply onto slots (highest price first).
- */
 public class ResourceMarket {
 
     public static final int TOTAL_COAL = 24;
@@ -17,7 +13,6 @@ public class ResourceMarket {
     public static final int TOTAL_GARBAGE = 24;
     public static final int TOTAL_URANIUM = 12;
 
-    /** A single market slot: price per token and current count. */
     public static class Slot {
         private final int price;
         private int count;

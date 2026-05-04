@@ -9,11 +9,8 @@ import java.util.Map;
 import java.util.Set;
 
 public class Game {
-    // Building cost for 1st house in a city (Step 1–3)
     public static final int BUILD_COST_FIRST = 10;
-    // Building cost for 2nd house in a city (Step 2–3)
     public static final int BUILD_COST_SECOND = 15;
-    // Building cost for 3rd house in a city (Step 3)
     public static final int BUILD_COST_THIRD = 20;
 
     private final List<City> cities = new ArrayList<>();

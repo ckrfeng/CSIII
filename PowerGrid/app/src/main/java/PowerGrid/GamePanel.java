@@ -7,7 +7,6 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,7 +26,6 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
-import javafx.scene.text.Font;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.ScrollEvent;
@@ -41,6 +39,7 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
 import javafx.scene.shape.Rectangle;
+import javafx.scene.text.Font;
 import javafx.scene.transform.Affine;
 import javafx.scene.transform.NonInvertibleTransformException;
 import javafx.stage.Stage;
@@ -137,7 +136,7 @@ public class GamePanel extends Application {
     @Override
     public void start(Stage stage) {
         rootStack = new StackPane();
-        MenuPanel menu = new MenuPanel(count -> showPlayerSetup(stage, count));
+        MenuPanel menu = new MenuPanel(this::showPlayerSetup);
         rootStack.getChildren().add(menu);
 
         Scene scene = new Scene(rootStack, 1400, 900);
@@ -146,44 +145,12 @@ public class GamePanel extends Application {
         stage.show();
     }
 
-    private void showPlayerSetup(Stage stage, int playerCount) {
-        VBox content = new VBox(10);
-        content.setAlignment(Pos.CENTER);
-        content.setStyle("-fx-background-color: #161616;");
-        List<TextField> nameFields = new ArrayList<>();
-        List<Button> readyButtons = new ArrayList<>();
-        Button continueButton = new Button("Continue");
-        continueButton.setDisable(true);
-
-        for (int i = 0; i < playerCount; i++) {
-            HBox row = new HBox(8);
-            row.setAlignment(Pos.CENTER);
-            TextField tf = new TextField("Player " + (i + 1));
-            tf.setPrefWidth(220);
-            Button ready = new Button("Ready");
-            ready.setOnAction(e -> {
-                boolean toReady = "Ready".equals(ready.getText());
-                ready.setText(toReady ? "Unready" : "Ready");
-                tf.setDisable(toReady);
-                boolean allReady = readyButtons.stream().allMatch(b -> "Unready".equals(b.getText()));
-                continueButton.setDisable(!allReady);
-            });
-            readyButtons.add(ready);
-            nameFields.add(tf);
-            row.getChildren().addAll(tf, ready);
-            content.getChildren().add(row);
-        }
-
-        continueButton.setOnAction(e -> {
-            List<String> names = new ArrayList<>();
-            for (TextField tf : nameFields) names.add(tf.getText().isBlank() ? "Player" : tf.getText().trim());
-            showReveal(stage, names);
-        });
-        content.getChildren().add(continueButton);
+    private void showPlayerSetup(int playerCount) {
+        VBox content = PlayerSetupPanel.create(playerCount, this::showReveal);
         rootStack.getChildren().setAll(content);
     }
 
-    private void showReveal(Stage stage, List<String> names) {
+    private void showReveal(List<String> names) {
         List<String> colors = new ArrayList<>(List.of("#D32F2F", "#1976D2", "#2E7D32", "#7B1FA2", "#FBC02D"));
         Collections.shuffle(names, random);
         List<String> chosen = new ArrayList<>(colors.subList(0, names.size()));
@@ -201,7 +168,7 @@ public class GamePanel extends Application {
         }
 
         Button startGame = new Button("Start Game");
-        startGame.setOnAction(e -> showRegionSelection(stage, names, chosen));
+        startGame.setOnAction(e -> showRegionSelection(names, chosen));
         Label t = new Label("Randomized Player Order");
         t.setTextFill(Color.WHITE);
         VBox wrapper = new VBox(18, t, row, startGame);
@@ -210,140 +177,32 @@ public class GamePanel extends Application {
         rootStack.getChildren().setAll(wrapper);
     }
 
-    private void showRegionSelection(Stage stage, List<String> orderedNames, List<String> colorHexes) {
+    private void showRegionSelection(List<String> orderedNames, List<String> colorHexes) {
         game = new Game(1654, 2287, orderedNames.size());
         game.applyRandomizedPlayerOrder(orderedNames, colorHexes);
         turnOrder = new ArrayList<>(game.getPlayers());
         initAuctionRoundState();
-
-        StackPane panel = new StackPane();
-        panel.setStyle("-fx-background-color: black;");
-
-        Image mapImg = new Image(getClass().getResource("/map.png").toExternalForm());
-        final double mapW = mapImg.getWidth();
-        final double mapH = mapImg.getHeight();
-        ImageView map = new ImageView(mapImg);
-        map.setFitHeight(760);
-        map.setPreserveRatio(true);
-        final double displayH = 760;
-        final double displayW = mapW * (displayH / mapH);
-
-        Pane overlay = new Pane();
-        overlay.setPickOnBounds(true);
-        overlay.setMouseTransparent(false);
-
-        Label current = new Label();
-        current.setTextFill(Color.WHITE);
-
-        VBox orderBox = new VBox(6);
-        orderBox.setPickOnBounds(false);
-        orderBox.setMouseTransparent(true);
-        orderBox.setAlignment(Pos.TOP_RIGHT);
-        StackPane.setAlignment(orderBox, javafx.geometry.Pos.TOP_RIGHT);
-        orderBox.setTranslateX(-12);
-        orderBox.setTranslateY(12);
-
-        List<RegionColor> sequence = List.of(
-                RegionColor.TURQUOISE,
-                RegionColor.BROWN,
-                RegionColor.RED,
-                RegionColor.BLUE,
-                RegionColor.YELLOW,
-                RegionColor.PURPLE
-        );
-        // Centers are in original map image coordinates (1654x2287).
-        List<Point2D> points = List.of(
-                new Point2D(643, 488),   // Turquoise
-                new Point2D(1182, 623),  // Brown
-                new Point2D(430, 887),   // Red
-                new Point2D(386, 1390),  // Blue
-                new Point2D(1052, 1214), // Yellow
-                new Point2D(858, 1847)   // Purple
-        );
-        Map<RegionColor, String> regionButtonColor = new EnumMap<>(RegionColor.class);
-        regionButtonColor.put(RegionColor.TURQUOISE, "#1AA6A6");
-        regionButtonColor.put(RegionColor.BROWN, "#8D6E63");
-        regionButtonColor.put(RegionColor.RED, "#D32F2F");
-        regionButtonColor.put(RegionColor.BLUE, "#1976D2");
-        regionButtonColor.put(RegionColor.YELLOW, "#FBC02D");
-        regionButtonColor.put(RegionColor.PURPLE, "#7B1FA2");
-
-        List<RegionColor> selected = new ArrayList<>();
-        int[] selecting = {0};
-
-        Runnable redrawOrder = () -> {
-            orderBox.getChildren().clear();
-            for (int i = 0; i < turnOrder.size(); i++) {
-                Player p = turnOrder.get(i);
-                Label l = new Label((i + 1) + ". " + p.getDisplayName());
-                l.setTextFill(Color.WHITE);
-                String border = i == selecting[0] ? "-fx-border-color:white;-fx-border-width:2;" : "";
-                l.setStyle("-fx-background-color:" + p.getColorHex() + ";-fx-padding:5;" + border);
-                orderBox.getChildren().add(l);
-            }
-            current.setText("Selecting: " + turnOrder.get(selecting[0]).getDisplayName());
-        };
-
-        redrawOrder.run();
-
-        for (int i = 0; i < sequence.size(); i++) {
-            RegionColor region = sequence.get(i);
-            Button b = new Button("Select Region");
-            b.setPrefSize(94, 30);
-            b.setStyle("-fx-background-color: " + regionButtonColor.get(region) + "; -fx-text-fill:white; -fx-font-weight:bold;");
-            Point2D p = points.get(i);
-            Runnable updatePosition = () -> {
-                double scaledW = displayW;
-                double scaledH = displayH;
-                if (scaledW <= 0 || scaledH <= 0) return;
-                double x = (p.getX() / mapW) * scaledW - (b.getPrefWidth() / 2.0);
-                double y = (p.getY() / mapH) * scaledH - (b.getPrefHeight() / 2.0);
-                b.setLayoutX(x);
-                b.setLayoutY(y);
-            };
-            updatePosition.run();
-            b.setOnAction(e -> {
-                if (selected.contains(region)) return;
-                selected.add(region);
-                b.setDisable(true);
-                b.setStyle("-fx-background-color: #666; -fx-text-fill:white; -fx-font-weight:bold;");
-                if (selected.size() >= turnOrder.size()) {
-                    game.setRegionsInteractable(selected);
-                    initGameView(stage, orderedNames, colorHexes);
-                    return;
-                }
-                selecting[0] = (selecting[0] + 1) % turnOrder.size();
-                redrawOrder.run();
-            });
-            overlay.getChildren().add(b);
-        }
-
-        Pane mapPane = new Pane();
-        mapPane.setPickOnBounds(false);   // was true
-        map.setMouseTransparent(true);
-        map.setLayoutX(0);
-        map.setLayoutY(0);
-        overlay.setLayoutX(0);
-        overlay.setLayoutY(0);
-        overlay.setMinSize(displayW, displayH);
-        overlay.setPrefSize(displayW, displayH);
-        overlay.setMaxSize(displayW, displayH);
-        mapPane.setMinSize(displayW, displayH);
-        mapPane.setPrefSize(displayW, displayH);
-        mapPane.setMaxSize(displayW, displayH);
-        mapPane.getChildren().addAll(map, overlay);
-
-        StackPane mapStack = new StackPane(mapPane);
-        VBox wrapper = new VBox(8, current, mapStack);
-        wrapper.setAlignment(Pos.CENTER);
-        current.setTextFill(Color.WHITE);
-        panel.getChildren().addAll(wrapper, orderBox);
+        StackPane panel = RegionSelectionPanel.create(turnOrder, selected -> {
+            game.setRegionsInteractable(selected);
+            initGameView(orderedNames, colorHexes);
+        });
         rootStack.getChildren().setAll(panel);
     }
 
-    private void initGameView(Stage stage, List<String> orderedNames, List<String> colorHexes) {
+    private void initGameView(List<String> orderedNames, List<String> colorHexes) {
         mapContainer = new Pane();
         mapContainer.setStyle("-fx-background-color: #111;");
+        /*
+        Image tiledBackground = new Image(getClass().getResource("/background2.png").toExternalForm());
+        BackgroundImage repeatingBackground = new BackgroundImage(
+                tiledBackground,
+                BackgroundRepeat.REPEAT,
+                BackgroundRepeat.REPEAT,
+                BackgroundPosition.DEFAULT,
+                BackgroundSize.DEFAULT
+        );
+        mapContainer.setBackground(new Background(repeatingBackground));
+        */
         HBox.setHgrow(mapContainer, Priority.ALWAYS);
 
         String path = getClass().getResource("/map.png").toExternalForm();
