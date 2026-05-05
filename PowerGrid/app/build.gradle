@@ -7,10 +7,20 @@ repositories {
     mavenCentral()
 }
 
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
 dependencies {
     // Standard testing setup
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Add the Windows libraries
+    runtimeOnly "org.openjfx:javafx-graphics:21:win"
+    runtimeOnly "org.openjfx:javafx-controls:21:win"
 }
 
 javafx {

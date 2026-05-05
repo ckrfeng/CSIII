@@ -54,6 +54,11 @@ public class PowerPlantDeck {
         return "STEP3".equals(cardId);
     }
 
+    /** Removes a card from the market with no replacement (e.g. bureaucracy discard). */
+    public boolean discardFromMarket(String cardId) {
+        return market.remove(cardId);
+    }
+
     /** Removes selected market card and refills one. Returns drawn replacement or null. */
     public String takeFromMarket(String cardId) {
         if (!market.remove(cardId)) return null;

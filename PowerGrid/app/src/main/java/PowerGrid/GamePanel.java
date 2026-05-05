@@ -101,6 +101,7 @@ public class GamePanel extends Application {
 
     private StackPane resourceOverlayPane;
     private StackPane powerWizardOverlay;
+    private VBox      wizardRoot;
 
     // ── game state ────────────────────────────────────────────────────────────
     private final Random random = new Random();
@@ -415,10 +416,17 @@ public class GamePanel extends Application {
             case "Purchase Resources"  -> toggleOrCreate(resourceOverlayPane, () -> createAndShowResourceOverlay());
             case "Build Cities"        -> { /* map IS the build UI; Done button is on HUD */ }
             case "Power Cities"        -> {
-                if (powerWizardOverlay != null && rootStack.getChildren().contains(powerWizardOverlay))
-                    powerWizardOverlay.setVisible(!powerWizardOverlay.isVisible());
-                else if (powerWizardPane == PowerWizardPane.IDLE)
+                if (powerWizardOverlay != null && rootStack.getChildren().contains(powerWizardOverlay)) {
+                    if (powerWizardOverlay.isVisible()) {
+                        powerWizardOverlay.setVisible(false);
+                    } else {
+                        if (powerWizardPane == PowerWizardPane.SELECT_PLANTS && wizardRoot != null)
+                            buildSelectPlantsPane(wizardRoot, powerWizardOverlay);
+                        powerWizardOverlay.setVisible(true);
+                    }
+                } else if (powerWizardPane == PowerWizardPane.IDLE) {
                     openPowerCitiesWizardAuto();
+                }
             }
         }
     }
@@ -620,6 +628,16 @@ public class GamePanel extends Application {
     // ═════════════════════════════════════════════════════════════════════════
 
     private void createAndShowAuctionOverlay() {
+        // Remove any market cards numbered ≤ max connected cities across all players.
+        int maxCities = 0;
+        for (Player p : turnOrder) maxCities = Math.max(maxCities, game.getConnectedCityCount(p));
+        if (maxCities > 0) {
+            final int threshold = maxCities;
+            new ArrayList<>(deck.getMarket()).stream()
+                .filter(id -> !"STEP3".equals(id) && Integer.parseInt(id) <= threshold)
+                .forEach(id -> deck.discardFromMarket(id));
+        }
+
         if (auctionOverlayPane != null) rootStack.getChildren().remove(auctionOverlayPane);
 
         auctionOverlayPane = new StackPane();
@@ -1049,6 +1067,7 @@ public class GamePanel extends Application {
         Label tot=new Label("Total: "+total); tot.setTextFill(Color.LIGHTGREEN);
         Button confirm=new Button("Confirm"); confirm.setDisable(!game.canPlayerEnterCity(player,city));
         confirm.setOnAction(ev -> {
+            int prevStep = game.getStep();
             if (!game.placeHouse(player,city)) { showOutOfMoneyPopup(); return; }
             List<Line> lines=new ArrayList<>();
             if (pr.getPath().size()>=2) for (int i=0;i<pr.getPath().size()-1;i++) {
@@ -1059,6 +1078,7 @@ public class GamePanel extends Application {
             }
             buildUndoStack.push(new BuildUndoStep(city,total,lines));
             updateCityStroke(city); refreshTopRightHud(); refreshOwnedAndMaterials(); clearCityPopup();
+            if (prevStep == 1 && game.getStep() == 2) showStepInterstitial(2);
         });
         box.getChildren().addAll(nm,oc,pp,hp,tot,confirm);
         box.setLayoutX(city.getMapX()+55); box.setLayoutY(city.getMapY()-70);
@@ -1116,7 +1136,8 @@ public class GamePanel extends Application {
         StackPane.setAlignment(xBtn, Pos.TOP_RIGHT);
         StackPane.setMargin(xBtn, new Insets(12));
 
-        VBox root = new VBox(20);
+        wizardRoot = new VBox(20);
+        VBox root = wizardRoot;
         root.setAlignment(Pos.CENTER);
         root.setPadding(new Insets(24));
         root.setMaxWidth(720);
@@ -1334,8 +1355,22 @@ public class GamePanel extends Application {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    //  ROUND INTERSTITIAL
+    //  STEP / ROUND INTERSTITIALS
     // ═════════════════════════════════════════════════════════════════════════
+
+    private void showStepInterstitial(int step) {
+        StackPane overlay = new StackPane();
+        overlay.setStyle("-fx-background-color:rgba(0,0,0,0.82);");
+        VBox box = new VBox(16); box.setAlignment(Pos.CENTER);
+        Label title = new Label("Step " + step); title.setTextFill(Color.LIMEGREEN);
+        try { var url = getClass().getResource("/universcondensed_medium.ttf");
+              title.setFont(url != null ? Font.loadFont(url.toExternalForm(), 72) : Font.font(72));
+        } catch (Exception ignored) { title.setStyle("-fx-font-size:72px;"); }
+        Label hint = new Label("Click anywhere to proceed"); hint.setTextFill(Color.GRAY); hint.setStyle("-fx-font-size:16px;");
+        box.getChildren().addAll(title, hint); overlay.getChildren().add(box);
+        overlay.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
+        rootStack.getChildren().add(overlay);
+    }
 
     private void showRoundInterstitial() {
         StackPane overlay=new StackPane(); overlay.setStyle("-fx-background-color:rgba(0,0,0,0.92);");
@@ -1368,7 +1403,6 @@ public class GamePanel extends Application {
         if (highestBidderIdx<0||activeAuctionCardId==null) return;
         Player winner=turnOrder.get(highestBidderIdx);
         if (!winner.pay(highestBid)) { bidStatus.setText("Auction failed: winner cannot pay."); auctionInProgress=false; activeAuctionCardId=null; return; }
-        addPurchasedPlant(winner,activeAuctionCardId);
         boughtThisAuctionRound.set(highestBidderIdx,true);
         String wonCard=activeAuctionCardId;
         String drawn=deck.takeFromMarket(activeAuctionCardId);
@@ -1377,17 +1411,89 @@ public class GamePanel extends Application {
         if (auctionBidPanelBox!=null){auctionBidPanelBox.setVisible(false); auctionBidPanelBox.setManaged(false);}
         activeAuctionCardId=null;
 
-        int nextChooser;
-        if (auctionStarterIdx>=0&&!boughtThisAuctionRound.get(auctionStarterIdx)&&!optedOutThisAuctionRound.get(auctionStarterIdx))
-            nextChooser=auctionStarterIdx;
-        else nextChooser=nextChooserFrom(auctionStarterIdx>=0?auctionStarterIdx:highestBidderIdx);
+        final int savedBidderIdx=highestBidderIdx;
+        Runnable advance=()->{
+            int nextChooser;
+            if (auctionStarterIdx>=0&&!boughtThisAuctionRound.get(auctionStarterIdx)&&!optedOutThisAuctionRound.get(auctionStarterIdx))
+                nextChooser=auctionStarterIdx;
+            else nextChooser=nextChooserFrom(auctionStarterIdx>=0?auctionStarterIdx:savedBidderIdx);
+            if (nextChooser<0) { enterResourcePurchasePhase(); return; }
+            currentTurnIdx=nextChooser; viewingPlayerIdx=nextChooser;
+            auctionInProgress=false; highestBid=0; highestBidderIdx=-1;
+            for(int i=0;i<passedThisAuction.size();i++) passedThisAuction.set(i,false);
+            skipBoughtPlayersInAuction();
+            refreshCardButtons(); refreshOwnedAndMaterials();
+        };
 
-        if (nextChooser<0) { enterResourcePurchasePhase(); return; }
-        currentTurnIdx=nextChooser; viewingPlayerIdx=nextChooser;
-        auctionInProgress=false; highestBid=0; highestBidderIdx=-1;
-        for(int i=0;i<passedThisAuction.size();i++) passedThisAuction.set(i,false);
-        skipBoughtPlayersInAuction();
-        refreshCardButtons(); refreshOwnedAndMaterials();
+        if (winner.getPowerPlants().size()>=Player.MAX_POWER_PLANTS) {
+            showPlantReplaceOverlay(winner, wonCard, advance);
+        } else {
+            addPurchasedPlant(winner, wonCard);
+            advance.run();
+        }
+    }
+
+    private void showPlantReplaceOverlay(Player player, String newCardId, Runnable onComplete) {
+        PowerPlantCard newCard=PowerPlantCard.byNumber(Integer.parseInt(newCardId));
+        if (newCard==null) { onComplete.run(); return; }
+
+        StackPane overlay=new StackPane();
+        overlay.setPickOnBounds(true);
+        overlay.setStyle("-fx-background-color:rgba(0,0,0,0.88);");
+
+        Label title=new Label("Replace one current power plant");
+        title.setTextFill(Color.WHITE);
+        title.setStyle("-fx-font-size:20px;-fx-font-weight:bold;");
+
+        String normStyle="-fx-background-color:#444;-fx-border-color:transparent;-fx-border-width:3;"
+                        +"-fx-border-radius:12;-fx-background-radius:12;-fx-padding:6;";
+        String selStyle ="-fx-background-color:#1a3d1a;-fx-border-color:limegreen;-fx-border-width:3;"
+                        +"-fx-border-radius:12;-fx-background-radius:12;-fx-padding:6;";
+        String greenBtn ="-fx-background-color:#2e7d32;-fx-text-fill:white;-fx-font-weight:bold;"
+                        +"-fx-font-size:14px;-fx-padding:10 32;-fx-background-radius:8;";
+
+        int[] selectedIdx={-1};
+        List<PowerPlant> plants=player.getPowerPlants();
+        List<StackPane> cards=new ArrayList<>();
+
+        Button confirm=new Button("Confirm Selection");
+        confirm.setStyle(greenBtn); confirm.setCursor(Cursor.HAND); confirm.setDisable(true);
+
+        Runnable refreshCards=()->{
+            for (int i=0;i<cards.size();i++) cards.get(i).setStyle(selectedIdx[0]==i?selStyle:normStyle);
+            confirm.setDisable(selectedIdx[0]<0);
+        };
+
+        HBox plantsRow=new HBox(18); plantsRow.setAlignment(Pos.CENTER);
+        for (int i=0;i<plants.size();i++) {
+            final int idx=i;
+            PowerPlant pl=plants.get(i);
+            StackPane card=new StackPane();
+            card.setPrefSize(OWNED_PLANT_SLOT,OWNED_PLANT_SLOT);
+            card.setMinSize(OWNED_PLANT_SLOT,OWNED_PLANT_SLOT);
+            card.setMaxSize(OWNED_PLANT_SLOT,OWNED_PLANT_SLOT);
+            card.setStyle(normStyle); card.setCursor(Cursor.HAND);
+            ImageView iv=new ImageView(loadCardImage(String.valueOf(pl.getNumber())));
+            iv.setFitWidth(OWNED_PLANT_IMAGE); iv.setFitHeight(OWNED_PLANT_IMAGE);
+            iv.setPreserveRatio(true); iv.setSmooth(true); iv.setMouseTransparent(true);
+            card.getChildren().add(iv);
+            card.setOnMouseClicked(ev->{ selectedIdx[0]=idx; refreshCards.run(); });
+            cards.add(card); plantsRow.getChildren().add(card);
+        }
+
+        confirm.setOnAction(e->{
+            List<PowerPlant> current=player.getPowerPlants();
+            if (selectedIdx[0]<0||selectedIdx[0]>=current.size()) return;
+            player.removePowerPlant(current.get(selectedIdx[0]));
+            player.addPowerPlant(newCard.toPowerPlant());
+            rootStack.getChildren().remove(overlay);
+            refreshOwnedAndMaterials();
+            onComplete.run();
+        });
+
+        VBox box=new VBox(28,title,plantsRow,confirm); box.setAlignment(Pos.CENTER);
+        overlay.getChildren().add(box);
+        rootStack.getChildren().add(overlay);
     }
 
     private void skipBoughtPlayersInAuction() {
@@ -1438,7 +1544,6 @@ public class GamePanel extends Application {
 
     private void addPurchasedPlant(Player player, String cardId) {
         PowerPlantCard card=PowerPlantCard.byNumber(Integer.parseInt(cardId)); if(card==null) return;
-        if(player.getPowerPlants().size()>=Player.MAX_POWER_PLANTS) player.removePowerPlant(player.getPowerPlants().get(0));
         player.addPowerPlant(card.toPowerPlant());
     }
 
@@ -1535,27 +1640,6 @@ public class GamePanel extends Application {
                 market.returnToSupply(rt,need);
             }
         }
-    }
-
-    private static String powerPlantSelectionLine(PowerPlant pl) {
-        int r=pl.getResourcesRequired(), c=pl.getCitiesSupplied(), s=pl.getTotalStored();
-        if(pl.isEcological()) return String.format("#%d (eco) — %d/run — up to %d cities — %d stored",pl.getNumber(),r,c,s);
-        if(pl.isHybrid())     return String.format("#%d (hybrid) — %d/run — up to %d cities — %d stored",pl.getNumber(),r,c,s);
-        String fuel=pl.getPrimaryResource()!=null?pl.getPrimaryResource().name().toLowerCase():"";
-        return String.format("#%d (%s) — %d/run — up to %d cities — %d stored",pl.getNumber(),fuel,r,c,s);
-    }
-
-    private static String formatResourcePoolDescription(String prefix, Map<ResourceType,Integer> pool) {
-        StringBuilder sb=new StringBuilder(prefix); boolean any=false;
-        for(ResourceType t:ResourceType.values()){int c=pool.getOrDefault(t,0); if(c>0){if(any) sb.append(", "); sb.append(t.name().toLowerCase()).append(" ").append(c); any=true;}}
-        if(!any) sb.append("none"); return sb.toString();
-    }
-
-    private static boolean committedAllocationsMatchPool(Map<ResourceType,Integer> pool, List<EnumMap<ResourceType,Integer>> committed) {
-        EnumMap<ResourceType,Integer> sum=new EnumMap<>(ResourceType.class);
-        for(EnumMap<ResourceType,Integer> m:committed) for(Map.Entry<ResourceType,Integer> e:m.entrySet()) sum.merge(e.getKey(),e.getValue(),Integer::sum);
-        for(ResourceType t:ResourceType.values()) if(sum.getOrDefault(t,0)!=pool.getOrDefault(t,0)) return false;
-        return true;
     }
 
     public String getGreeting() { return "Welcome to Power Grid!"; }
