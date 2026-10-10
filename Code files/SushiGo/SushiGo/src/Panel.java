@@ -1,0 +1,340 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Panel: draws the board and handles selection.
+ * - left/right hands are stacked vertically (landscape), top/bottom are horizontal (portrait)
+ * - center-played areas: top/bottom are horizontal rows, left/right are vertical columns (so long sides face each other)
+ * - player labels include Score and Pudding count
+ * - uses Card.drawRotated(...) from your Card class (unchanged)
+ */
+public class Panel extends JPanel implements MouseListener {
+    private final Game game;
+    private final int CARD_W = 80;
+    private final int CARD_H = 120;
+    private final int SIDE_W = 120; // left/right card display width (landscape)
+    private final int SIDE_H = 80;  // left/right card display height (landscape)
+    private final int GAP = 8;
+    private final List<Card> selected = new ArrayList<>();
+
+    // Visual rotation offset (increase whenever hands are passed left)
+    private int seatOffset = 0;
+
+    private final JButton doneBtn;
+    private final JButton chopBtn;
+
+    public Panel(Game game) {
+        this.game = game;
+        setLayout(null);
+        setBackground(new Color(0xE9EFEF));
+        setPreferredSize(new Dimension(1000, 700));
+
+        doneBtn = new JButton("Done");
+        doneBtn.setBounds(420, 640, 100, 34);
+        doneBtn.addActionListener(e -> onDone());
+        add(doneBtn);
+
+        chopBtn = new JButton("Use Chopsticks");
+        chopBtn.setBounds(540, 640, 140, 34);
+        chopBtn.addActionListener(e -> onUseChopsticks());
+        add(chopBtn);
+
+        addMouseListener(this);
+    }
+
+    private void onUseChopsticks() {
+        Player cur = game.getCurrentPlayer();
+        if (cur == null) return;
+        if (selected.size() != 2) return;
+
+        boolean hasChop = false;
+        for (Card c : cur.table) {
+            if ("chopsticks".equalsIgnoreCase(c.type)) { hasChop = true; break; }
+        }
+        if (!hasChop) return;
+
+        // Use game's chopsticks helper (returns the chopsticks card to hand inside Game)
+        game.useChopsticks(cur, selected.get(0), selected.get(1));
+        selected.clear();
+
+        // finish turn & rotate visible seats
+        game.endTurn();
+        seatOffset = (seatOffset + 1) % 4;
+        repaint();
+    }
+
+    private void onDone() {
+        Player cur = game.getCurrentPlayer();
+        if (cur == null) return;
+
+        if (selected.isEmpty()) {
+            game.endTurn();
+            seatOffset = (seatOffset + 1) % 4;
+            repaint();
+            return;
+        }
+
+        if (selected.size() == 1) {
+            game.playCard(cur, selected.get(0));
+        } else {
+            // selected.size() == 2
+            boolean hasChop = false;
+            for (Card c : cur.table) if ("chopsticks".equalsIgnoreCase(c.type)) { hasChop = true; break; }
+            if (hasChop) {
+                // game.useChopsticks will return the chopsticks to hand
+                game.useChopsticks(cur, selected.get(0), selected.get(1));
+            } else {
+                // no chopsticks: play first only
+                game.playCard(cur, selected.get(0));
+            }
+        }
+
+        selected.clear();
+        game.endTurn();
+        seatOffset = (seatOffset + 1) % 4;
+        repaint();
+    }
+
+    @Override
+    protected void paintComponent(Graphics gg) {
+        super.paintComponent(gg);
+        Graphics2D g = (Graphics2D) gg;
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        int w = getWidth(), h = getHeight();
+
+        // big center rectangle
+        int centerW = Math.min(900, w - 160);
+        int centerH = Math.min(520, h - 160);
+        int rectX = (w - centerW) / 2;
+        int rectY = (h - centerH) / 2;
+
+        g.setColor(Color.WHITE);
+        g.fillRoundRect(rectX, rectY, centerW, centerH, 16, 16);
+        g.setColor(Color.DARK_GRAY);
+        g.setStroke(new BasicStroke(2f));
+        g.drawRoundRect(rectX, rectY, centerW, centerH, 16, 16);
+
+        // draw round label
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 16f));
+        g.drawString("Round: " + game.round, rectX + 12, rectY + 22);
+
+        // compute symmetric center-play areas (equidistant from rectangle)
+        int pad = 40;
+        Point topCenter = new Point(rectX + centerW / 2, rectY + pad + CARD_H / 2);
+        Point bottomCenter = new Point(rectX + centerW / 2, rectY + centerH - pad - CARD_H / 2);
+        Point leftCenter = new Point(rectX + pad + SIDE_W / 2, rectY + centerH / 2);
+        Point rightCenter = new Point(rectX + centerW - pad - SIDE_W / 2, rectY + centerH / 2);
+
+        Point[] centers = new Point[] { bottomCenter, rightCenter, topCenter, leftCenter };
+
+        // draw each player's played cards in center areas: top/bottom -> horizontal rows, left/right -> vertical columns
+        for (int i = 0; i < game.players.size(); i++) {
+            Player p = game.players.get(i);
+            int seat = (i - seatOffset + 4) % 4;
+            Point area = centers[seat];
+            if (seat == 1 || seat == 3) {
+                // left/right -> vertical column; cards are landscape and rotated so top faces center
+                int angle = (seat == 1) ? 90 : 270;
+                drawColumnCenteredRotated(g, p.table, area.x, area.y, SIDE_W, SIDE_H, GAP, angle);
+            } else {
+                // top/bottom -> horizontal row; portrait
+                int angle = (seat == 2) ? 180 : 0;
+                drawRowCenteredRotated(g, p.table, area.x, area.y, CARD_W, CARD_H, GAP, angle);
+            }
+        }
+
+        // draw each player's hand at the sides, centered
+        for (int i = 0; i < game.players.size(); i++) {
+            Player p = game.players.get(i);
+            int seat = (i - seatOffset + 4) % 4;
+            drawPlayerHandForSeat(g, p, seat, rectX, rectY, centerW, centerH);
+        }
+    }
+
+    // horizontal row centered at (centerX,centerY)
+    private void drawRowCenteredRotated(Graphics2D g, List<Card> cards, int centerX, int centerY,
+                                        int drawW, int drawH, int gap, int angle) {
+        if (cards == null || cards.isEmpty()) return;
+        int totalW = cards.size() * drawW + (cards.size() - 1) * gap;
+        int startX = centerX - totalW / 2;
+        int y = centerY - drawH / 2;
+        int x = startX;
+        for (Card c : cards) {
+            c.drawRotated(g, x, y, drawW, drawH, true, angle);
+            x += drawW + gap;
+        }
+    }
+
+    // vertical column centered at (centerX,centerY)
+    private void drawColumnCenteredRotated(Graphics2D g, List<Card> cards, int centerX, int centerY,
+                                           int drawW, int drawH, int gap, int angle) {
+        if (cards == null || cards.isEmpty()) return;
+        int totalH = cards.size() * drawH + (cards.size() - 1) * gap;
+        int startY = centerY - totalH / 2;
+        int x = centerX - drawW / 2;
+        int y = startY;
+        for (Card c : cards) {
+            c.drawRotated(g, x, y, drawW, drawH, true, angle);
+            y += drawH + gap;
+        }
+    }
+
+    private void drawPlayerHandForSeat(Graphics2D g, Player p, int seat,
+                                       int rectX, int rectY, int centerW, int centerH) {
+        boolean faceUp = (game.getCurrentPlayer() == p);
+        int count = p.hand.size();
+
+        Point center;
+        int margin = 32;
+        int fullW = getWidth(), fullH = getHeight();
+        switch (seat) {
+            case 0: center = new Point(fullW/2, rectY + centerH + margin + CARD_H/2); break;
+            case 1: center = new Point(rectX + centerW + margin + SIDE_W/2, fullH/2); break;
+            case 2: center = new Point(fullW/2, rectY - margin - CARD_H/2); break;
+            default: center = new Point(rectX - margin - SIDE_W/2, fullH/2); break;
+        }
+
+        boolean vertical = (seat == 1 || seat == 3);
+        int drawW = vertical ? SIDE_W : CARD_W;
+        int drawH = vertical ? SIDE_H : CARD_H;
+
+        int totalW = vertical ? drawW : Math.max(0, count * drawW + (count - 1) * GAP);
+        int totalH = vertical ? Math.max(0, count * drawH + (count - 1) * GAP) : drawH;
+
+        int startX = center.x - totalW / 2;
+        int startY = center.y - totalH / 2;
+
+        int angleDeg;
+        if (seat == 0) angleDeg = 0;
+        else if (seat == 1) angleDeg = 90;
+        else if (seat == 2) angleDeg = 180;
+        else angleDeg = 270;
+
+        for (int i = 0; i < count; i++) {
+            Card c = p.hand.get(i);
+            int x = startX + (vertical ? 0 : i * (drawW + GAP));
+            int y = startY + (vertical ? i * (drawH + GAP) : 0);
+
+            boolean isCur = (game.getCurrentPlayer() == p);
+            boolean isSelected = isCur && selected.contains(c);
+
+            int drawX = x;
+            int drawY = y;
+            if (isSelected) {
+                int nudge = 14;
+                switch (seat) {
+                    case 0: drawY -= nudge; break;
+                    case 1: drawX -= nudge; break;
+                    case 2: drawY += nudge; break;
+                    case 3: drawX += nudge; break;
+                }
+            }
+
+            // draw card rotated so top faces center
+            c.drawRotated(g, drawX, drawY, drawW, drawH, isCur, angleDeg);
+
+            // draw player label next to first card (score + puddings)
+            if (i == 0) {
+                g.setColor(Color.BLACK);
+                g.setFont(g.getFont().deriveFont(Font.PLAIN, 12f));
+                String label = "P" + p.id + " | Score: " + p.score + " | P:" + p.pudding;
+                int labelX = drawX - 40, labelY = drawY - 8;
+                if (seat == 0) {
+                    labelX = drawX;
+                    labelY = drawY + drawH + 20;
+                } else if (seat == 1) {
+                    labelX = drawX + drawW + 8;
+                    labelY = drawY + drawH / 2;
+                } else if (seat == 2) {
+                    labelX = drawX;
+                    labelY = drawY - 14;
+                } else if (seat == 3) {
+                    labelX = drawX - 120;
+                    labelY = drawY + drawH / 2;
+                }
+                g.drawString(label, labelX, labelY);
+            }
+        }
+    }
+
+    // ---------- mouse: select/deselect cards from current player's hand ----------
+    @Override
+    public void mouseClicked(MouseEvent e) {
+        Player cur = game.getCurrentPlayer();
+        if (cur == null) return;
+
+        // find current player's index in list
+        int curIdx = -1;
+        for (int i = 0; i < game.players.size(); i++) {
+            if (game.players.get(i) == cur) { curIdx = i; break; }
+        }
+        if (curIdx == -1) return;
+
+        int seat = (curIdx - seatOffset + 4) % 4;
+        boolean vertical = (seat == 1 || seat == 3);
+
+        // compute center location used earlier
+        int fullW = getWidth(), fullH = getHeight();
+        int centerRectH = Math.min(520, fullH - 160);
+        int rectY = (fullH - centerRectH) / 2;
+        int centerRectW = Math.min(900, fullW - 160);
+        int rectX = (fullW - centerRectW) / 2;
+
+        Point center;
+        int margin = 32;
+        switch (seat) {
+            case 0: center = new Point(fullW/2, rectY + centerRectH + margin + CARD_H/2); break;
+            case 1: center = new Point(rectX + centerRectW + margin + SIDE_W/2, fullH/2); break;
+            case 2: center = new Point(fullW/2, rectY - margin - CARD_H/2); break;
+            default: center = new Point(rectX - margin - SIDE_W/2, fullH/2); break;
+        }
+
+        int drawW = vertical ? SIDE_W : CARD_W;
+        int drawH = vertical ? SIDE_H : CARD_H;
+        int count = cur.hand.size();
+        if (count == 0) return;
+
+        int totalW = vertical ? drawW : Math.max(0, count * drawW + (count - 1) * GAP);
+        int totalH = vertical ? Math.max(0, count * drawH + (count - 1) * GAP) : drawH;
+        int startX = center.x - totalW / 2;
+        int startY = center.y - totalH / 2;
+
+        int mx = e.getX(), my = e.getY();
+        for (int i = 0; i < count; i++) {
+            int x = startX + (vertical ? 0 : i * (drawW + GAP));
+            int y = startY + (vertical ? i * (drawH + GAP) : 0);
+            Rectangle r = new Rectangle(x, y, drawW, drawH);
+            if (r.contains(mx, my)) {
+                Card clicked = cur.hand.get(i);
+
+                // selection rules
+                boolean hasChop = false;
+                for (Card c : cur.table) if ("chopsticks".equalsIgnoreCase(c.type)) { hasChop = true; break; }
+
+                if (!selected.contains(clicked)) {
+                    if (selected.isEmpty()) selected.add(clicked);
+                    else {
+                        if (hasChop && selected.size() < 2) selected.add(clicked);
+                        else {
+                            selected.clear();
+                            selected.add(clicked);
+                        }
+                    }
+                } else {
+                    selected.remove(clicked);
+                }
+                repaint();
+                return;
+            }
+        }
+    }
+
+    @Override public void mousePressed(MouseEvent e) {}
+    @Override public void mouseReleased(MouseEvent e) {}
+    @Override public void mouseEntered(MouseEvent e) {}
+    @Override public void mouseExited(MouseEvent e) {}
+}

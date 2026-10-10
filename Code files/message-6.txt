@@ -1,0 +1,118 @@
+import java.util.*;
+import static java.lang.System.*;
+
+public class DominoMeanie {
+    public static void main(String[] args) {
+        Scanner input = new Scanner(System.in);
+        int numPlayers, maxPip, randSeed;
+        Random randNum;
+
+        out.println("Enter in the number of players:");
+        numPlayers = input.nextInt();
+
+        out.println("Enter in the max pip size:");
+        maxPip = input.nextInt();
+
+        out.println("Enter in the random seed value:");
+        randSeed = input.nextInt();
+        randNum = new Random(randSeed);
+
+        DominoSet dominoSet = new DominoSet(maxPip);
+        dominoSet.shuffle(randSeed);
+
+        ArrayList<TreeSet<Domino>> players = new ArrayList<>();
+        for (int i = 0; i < numPlayers; i++) {
+            players.add(new TreeSet<>());
+        }
+
+        ArrayList<Domino> dominoes = dominoSet.getSet();
+        int playerIndex = 0;
+        for (Domino domino : dominoes) {
+            players.get(playerIndex).add(domino);
+            playerIndex = (playerIndex + 1) % numPlayers;
+        }
+
+        int currentPlayer = 0;
+        for (int i = 0; i <= maxPip; i++) {
+            for (int j = i; j <= maxPip; j++) {
+                Domino targetDomino = new Domino(i, j);
+
+                boolean played = false;
+                while (!played) {
+                    out.println("Looking for " + targetDomino);
+
+                    for (int p = 0; p < numPlayers; p++) {
+                        if (p == currentPlayer) {
+                            out.print("Player " + (p + 1) + " hand: " + players.get(p));
+                        } else {
+                            out.print("Player " + (p + 1) + " number of dominoes: " + players.get(p).size());
+                        }
+                        out.println();
+                    }
+                    out.println();
+
+                    TreeSet<Domino> currentHand = players.get(currentPlayer);
+
+                    if (currentHand.contains(targetDomino)) {
+                        out.println(targetDomino + " played by player " + (currentPlayer + 1));
+                        currentHand.remove(targetDomino);
+                        played = true;
+                    } else {
+
+                        int nextPlayer = (currentPlayer + 1) % numPlayers;
+                        while (players.get(nextPlayer).isEmpty()) {
+                            nextPlayer = (nextPlayer + 1) % numPlayers;
+                        }
+
+                        TreeSet<Domino> nextHand = players.get(nextPlayer);
+                        int stealIndex = randNum.nextInt(nextHand.size());
+                        Iterator<Domino> iter = nextHand.iterator();
+                        Domino stolenDomino = null;
+                        for (int k = 0; k <= stealIndex; k++) {
+                            stolenDomino = iter.next();
+                        }
+
+                        out.println("player " + (currentPlayer + 1) + " grabbed " + stolenDomino + " from player " + (nextPlayer + 1));
+                        nextHand.remove(stolenDomino);
+                        currentHand.add(stolenDomino);
+
+                        if (stolenDomino.equals(targetDomino)) {
+                            out.println(targetDomino + " played by player " + (currentPlayer + 1));
+                            currentHand.remove(targetDomino);
+                            played = true;
+                        }
+                    }
+
+                    currentPlayer = (currentPlayer + 1) % numPlayers;
+
+                    while (players.get(currentPlayer).isEmpty()) {
+                        currentPlayer = (currentPlayer + 1) % numPlayers;
+                    }
+
+                    int activePlayers = 0;
+                    int meaniePlayer = -1;
+                    for (int p = 0; p < numPlayers; p++) {
+                        if (!players.get(p).isEmpty()) {
+                            activePlayers++;
+                            meaniePlayer = p;
+                        }
+                    }
+
+                    if (activePlayers == 1) {
+                        out.println("Player " + (meaniePlayer + 1) + " is the Domino Meanie!");
+                        for (int p = 0; p < numPlayers; p++) {
+                            if (p == meaniePlayer) {
+                                out.print("Player " + (p + 1) + " hand: " + players.get(p));
+                            } else {
+                                out.print("Player " + (p + 1) + " number of dominoes: " + players.get(p).size());
+                            }
+                            out.println();
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
